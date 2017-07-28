@@ -1,0 +1,9 @@
+[package]
+name = "xhttp2"
+version = "0.1.0"
+authors = ["Takeru Ohta <phjgt308@gmail.com>"]
+
+[dependencies]
+fibers = "0.1"
+futures = "0.1"
+trackable = "0.2"
