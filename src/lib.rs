@@ -1,9 +1,12 @@
 extern crate fibers;
 extern crate futures;
+extern crate handy_async;
 #[macro_use]
 extern crate trackable;
 
 pub use error::{Error, ErrorKind};
+
+pub mod preface;
 
 mod error;
 
@@ -11,12 +14,15 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(test)]
 mod test {
+    use futures::Future;
+    use super::*;
+
     #[test]
     fn it_works() {
-        let _data;
+        let data;
         #[cfg_attr(rustfmt, rustfmt_skip)]
         {
-            _data = [
+            data = [
                 80, 82, 73, 32, 42, 32, 72, 84, 84, 80, 47, 50, 46, 48, 13, 10, 13, 10,
                 83, 77, 13, 10, 13, 10, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 76, 1, 4, 0, 0,
                 0, 1, 131, 134, 69, 149, 98, 114, 209, 65, 252, 30, 202, 36, 95, 21, 133,
@@ -27,5 +33,9 @@ mod test {
                 1, 0, 0, 0, 1, 0, 0, 0, 0, 6, 10, 4, 119, 100, 103, 107
             ];
         }
+
+        let input = data;
+        let input = track_try_unwrap!(preface::read_preface(&input[..]).wait());
+        assert_eq!(input.len(), data.len() - preface::PREFACE_BYTES.len());
     }
 }
