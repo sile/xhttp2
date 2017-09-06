@@ -6,6 +6,17 @@ use handy_async::io::futures::ReadExact;
 
 use {Result, Error};
 
+pub const FRAME_TYPE_DATA: u8 = 0x0;
+pub const FRAME_TYPE_HEADERS: u8 = 0x1;
+pub const FRAME_TYPE_PRIORITY: u8 = 0x2;
+pub const FRAME_TYPE_RST_STREAM: u8 = 0x3;
+pub const FRAME_TYPE_SETTINGS: u8 = 0x4;
+pub const FRAME_TYPE_PUSH_PROMISE: u8 = 0x5;
+pub const FRAME_TYPE_PING: u8 = 0x6;
+pub const FRAME_TYPE_GOAWAY: u8 = 0x7;
+pub const FRAME_TYPE_WINDOW_UPDATE: u8 = 0x8;
+pub const FRAME_TYPE_CONTINUATION: u8 = 0x9;
+
 /// https://tools.ietf.org/html/rfc7540#section-4
 ///
 /// ```text

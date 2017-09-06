@@ -1,5 +1,4 @@
 extern crate byteorder;
-extern crate fibers;
 extern crate futures;
 extern crate handy_async;
 #[macro_use]
