@@ -1,3 +1,4 @@
+extern crate byteorder;
 extern crate fibers;
 extern crate futures;
 extern crate handy_async;
@@ -6,6 +7,7 @@ extern crate trackable;
 
 pub use error::{Error, ErrorKind};
 
+pub mod frame;
 pub mod preface;
 
 mod error;
@@ -33,9 +35,22 @@ mod test {
                 1, 0, 0, 0, 1, 0, 0, 0, 0, 6, 10, 4, 119, 100, 103, 107
             ];
         }
-
         let input = data;
+
+        // the preface
         let input = track_try_unwrap!(preface::read_preface(&input[..]).wait());
         assert_eq!(input.len(), data.len() - preface::PREFACE_BYTES.len());
+
+        // the header of the first frame
+        let (_input, header) = track_try_unwrap!(frame::read_frame_header(&input[..]).wait());
+        assert_eq!(
+            header,
+            frame::FrameHeader {
+                payload_length: 0,
+                payload_type: 4,
+                flags: 0,
+                stream_id: 0,
+            }
+        );
     }
 }
