@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate bitflags;
 extern crate byteorder;
 extern crate futures;
 extern crate handy_async;
@@ -41,7 +43,7 @@ mod test {
         assert_eq!(input.len(), data.len() - preface::PREFACE_BYTES.len());
 
         // the header of the first frame
-        let (_input, header) = track_try_unwrap!(frame::read_frame_header(&input[..]).wait());
+        let (input, header) = track_try_unwrap!(frame::read_frame_header(&input[..]).wait());
         assert_eq!(
             header,
             frame::FrameHeader {
@@ -51,5 +53,54 @@ mod test {
                 stream_id: 0,
             }
         );
+
+        // the header of the second frame
+        let (input, header) = track_try_unwrap!(frame::read_frame_header(&input[..]).wait());
+        assert_eq!(
+            header,
+            frame::FrameHeader {
+                payload_length: 76,
+                payload_type: 1,
+                flags: 4,
+                stream_id: 1,
+            }
+        );
+
+        // the payload of the header frame
+        let (input, frame) =
+            track_try_unwrap!(frame::read_headers_frame(&input[..], header.clone()).wait());
+
+        // TODO
+        let mut fragment = vec![];
+        fragment.extend(vec![131, 134, 69, 149, 98, 114, 209, 65]);
+        fragment.extend(vec![252, 30, 202, 36, 95, 21, 133, 42, 75, 99, 27, 135]);
+        fragment.extend(vec![235, 25, 104, 160, 255, 65, 138, 160, 228, 29, 19]);
+        fragment.extend(vec![157, 9, 184, 200, 0, 15, 95, 139, 29, 117, 208, 98]);
+        fragment.extend(vec![13, 38, 61, 76, 77, 101, 100, 122, 141, 154, 202, 200]);
+        fragment.extend(vec![180, 199, 96, 43, 186, 184, 22, 144, 189, 255]);
+        fragment.extend(vec![64, 2, 116, 101, 134, 77, 131, 53, 5, 177, 31]);
+        assert_eq!(
+            frame,
+            frame::HeadersFrame {
+                priority: None,
+                fragment: fragment,
+
+                padding: vec![],
+            }
+        );
+
+        // the header of the third frame
+        let (input, header) = track_try_unwrap!(frame::read_frame_header(&input[..]).wait());
+        assert_eq!(
+            header,
+            frame::FrameHeader {
+                payload_length: 11,
+                payload_type: 0,
+                flags: 1,
+                stream_id: 1,
+            }
+        );
+
+        assert_eq!(input, []);
     }
 }

@@ -17,6 +17,21 @@ pub const FRAME_TYPE_GOAWAY: u8 = 0x7;
 pub const FRAME_TYPE_WINDOW_UPDATE: u8 = 0x8;
 pub const FRAME_TYPE_CONTINUATION: u8 = 0x9;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameType {
+    Data,
+    Headers,
+    Priority,
+    RstStream,
+    Settings,
+    PushPromise,
+    Ping,
+    Goaway,
+    WindowUpdate,
+    Continuation,
+    Unknown(u8),
+}
+
 /// https://tools.ietf.org/html/rfc7540#section-4
 ///
 /// ```text
@@ -92,6 +107,112 @@ impl<R: Read> Future for ReadFrameHeader<R> {
         if let Async::Ready((reader, bytes)) = track!(self.0.poll().map_err(Error::from))? {
             let header = track!(FrameHeader::read_from(&bytes[..]))?;
             Ok(Async::Ready((reader, header)))
+        } else {
+            Ok(Async::NotReady)
+        }
+    }
+}
+
+bitflags! {
+    struct HeadersFlags: u8 {
+        const HEADERS_END_STREAM = 0x01;
+        const HEADERS_END_HEADERS = 0x04;
+        const HEADERS_PADDED = 0x08;
+        const HEADERS_PRIORITY = 0x20;
+    }
+}
+
+/// https://tools.ietf.org/html/rfc7540#section-6.2
+///
+/// ```text
+///    +---------------+
+///    |Pad Length? (8)|
+///    +-+-------------+-----------------------------------------------+
+///    |E|                 Stream Dependency? (31)                     |
+///    +-+-------------+-----------------------------------------------+
+///    |  Weight? (8)  |
+///    +-+-------------+-----------------------------------------------+
+///    |                   Header Block Fragment (*)                 ...
+///    +---------------------------------------------------------------+
+///    |                           Padding (*)                       ...
+///    +---------------------------------------------------------------+
+///
+///                      Figure 7: HEADERS Frame Payload
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeadersFrame {
+    pub priority: Option<Priority>,
+    pub fragment: Vec<u8>, // TODO: HeaderBlockFragment,
+    pub padding: Vec<u8>,
+}
+impl HeadersFrame {
+    pub fn read_from<R: Read>(mut reader: R, header: &FrameHeader) -> Result<Self> {
+        let flags = HeadersFlags::from_bits_truncate(header.flags);
+        let mut fragment_len = header.payload_length as usize;
+
+        let padding_len = if flags.contains(HEADERS_PADDED) {
+            fragment_len -= 1;
+            track!(reader.read_u8().map_err(Error::from))?
+        } else {
+            0
+        };
+        fragment_len -= padding_len as usize;
+
+        let priority = if flags.contains(HEADERS_PRIORITY) {
+            fragment_len -= 4;
+            Some(track!(Priority::read_from(&mut reader))?)
+        } else {
+            None
+        };
+
+        let mut fragment = vec![0; fragment_len];
+        track!(reader.read_exact(&mut fragment).map_err(Error::from))?;
+
+        let mut padding = vec![0; padding_len as usize];
+        track!(reader.read_exact(&mut padding).map_err(Error::from))?;
+
+        Ok(HeadersFrame {
+            priority,
+            fragment,
+            padding,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Priority {
+    pub exclusive: bool,
+    pub stream_dependency: u32,
+    pub weight_minus_one: u8,
+}
+impl Priority {
+    pub fn read_from<R: Read>(mut reader: R) -> Result<Self> {
+        let value = track!(reader.read_u32::<BigEndian>().map_err(Error::from))?;
+        let exclusive = (value >> 31) == 1;
+        let stream_dependency = value & 0x7FFF_FFFF;
+        let weight_minus_one = track!(reader.read_u8().map_err(Error::from))?;
+        Ok(Priority {
+            exclusive,
+            stream_dependency,
+            weight_minus_one,
+        })
+    }
+}
+
+pub fn read_headers_frame<R: Read>(reader: R, header: FrameHeader) -> ReadHeadersFrame<R> {
+    let buf = vec![0; header.payload_length as usize];
+    ReadHeadersFrame(reader.async_read_exact(buf), header)
+}
+
+#[derive(Debug)]
+pub struct ReadHeadersFrame<R>(ReadExact<R, Vec<u8>>, FrameHeader);
+impl<R: Read> Future for ReadHeadersFrame<R> {
+    type Item = (R, HeadersFrame);
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        if let Async::Ready((reader, bytes)) = track!(self.0.poll().map_err(Error::from))? {
+            let frame = track!(HeadersFrame::read_from(&bytes[..], &self.1))?;
+            Ok(Async::Ready((reader, frame)))
         } else {
             Ok(Async::NotReady)
         }
