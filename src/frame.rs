@@ -122,6 +122,74 @@ bitflags! {
     }
 }
 
+bitflags! {
+    struct DataFlags: u8 {
+        const DATA_END_STREAM = 0x01;
+        const DATA_PADDED = 0x08;
+    }
+}
+
+/// https://tools.ietf.org/html/rfc7540#section-6.1
+///
+/// ```text
+///    +---------------+
+///    |Pad Length? (8)|
+///    +---------------+-----------------------------------------------+
+///    |                            Data (*)                         ...
+///    +---------------------------------------------------------------+
+///    |                           Padding (*)                       ...
+///    +---------------------------------------------------------------+
+///
+///                       Figure 6: DATA Frame Payload
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataFrame {
+    pub padding_len: u8,
+    pub data: Vec<u8>,
+}
+impl DataFrame {
+    pub fn read_from<R: Read>(mut reader: R, header: &FrameHeader) -> Result<Self> {
+        let flags = DataFlags::from_bits_truncate(header.flags);
+        let mut data_len = header.payload_length as usize;
+
+        let padding_len = if flags.contains(DATA_PADDED) {
+            data_len -= 1;
+            track!(reader.read_u8().map_err(Error::from))?
+        } else {
+            0
+        };
+        data_len -= padding_len as usize;
+
+        let mut data = vec![0; data_len];
+        track!(reader.read_exact(&mut data).map_err(Error::from))?;
+
+        let mut padding = vec![0; padding_len as usize];
+        track!(reader.read_exact(&mut padding).map_err(Error::from))?;
+
+        Ok(DataFrame { padding_len, data })
+    }
+}
+
+pub fn read_data_frame<R: Read>(reader: R, header: FrameHeader) -> ReadDataFrame<R> {
+    let buf = vec![0; header.payload_length as usize];
+    ReadDataFrame(reader.async_read_exact(buf), header)
+}
+
+#[derive(Debug)]
+pub struct ReadDataFrame<R>(ReadExact<R, Vec<u8>>, FrameHeader);
+impl<R: Read> Future for ReadDataFrame<R> {
+    type Item = (R, DataFrame);
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        if let Async::Ready((reader, bytes)) = track!(self.0.poll().map_err(Error::from))? {
+            let frame = track!(DataFrame::read_from(&bytes[..], &self.1))?;
+            Ok(Async::Ready((reader, frame)))
+        } else {
+            Ok(Async::NotReady)
+        }
+    }
+}
+
 /// https://tools.ietf.org/html/rfc7540#section-6.2
 ///
 /// ```text

@@ -66,7 +66,7 @@ mod test {
             }
         );
 
-        // the payload of the header frame
+        // the payload of the headers frame
         let (input, frame) =
             track_try_unwrap!(frame::read_headers_frame(&input[..], header.clone()).wait());
 
@@ -98,6 +98,17 @@ mod test {
                 payload_type: 0,
                 flags: 1,
                 stream_id: 1,
+            }
+        );
+
+        // the payload of the data frame
+        let (input, frame) =
+            track_try_unwrap!(frame::read_data_frame(&input[..], header.clone()).wait());
+        assert_eq!(
+            frame,
+            frame::DataFrame {
+                padding_len: 0,
+                data: vec![0, 0, 0, 0, 6, 10, 4, 119, 100, 103, 107],
             }
         );
 
