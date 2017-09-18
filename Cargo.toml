@@ -8,6 +8,7 @@ bitflags = "0.9"
 byteorder = "1"
 futures = "0.1"
 handy_async = "0.2"
+hpack_codec = "0.1"
 trackable = "0.2"
 
 [dev-dependencies]
