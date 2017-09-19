@@ -9,7 +9,14 @@ extern crate trackable;
 
 pub use error::{Error, ErrorKind};
 
+macro_rules! track_io {
+    ($expr:expr) => {
+        $expr.map_err(Error::from)
+    }
+}
+
 pub mod frame;
+pub mod frame2;
 pub mod preface;
 
 mod error;
