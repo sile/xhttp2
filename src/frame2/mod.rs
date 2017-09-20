@@ -13,6 +13,7 @@ pub use self::priority::PriorityFrame;
 pub use self::push_promise::PushPromiseFrame;
 pub use self::rst_stream::RstStreamFrame;
 pub use self::settings::SettingsFrame;
+pub use self::window_update::WindowUpdateFrame;
 
 use self::header::{FrameHeader, ReadFrameHeader};
 
@@ -27,6 +28,7 @@ mod priority;
 mod push_promise;
 mod rst_stream;
 mod settings;
+mod window_update;
 
 pub const FRAME_TYPE_DATA: u8 = 0x0;
 pub const FRAME_TYPE_HEADERS: u8 = 0x1;
@@ -62,7 +64,7 @@ pub enum Frame {
     PushPromise(PushPromiseFrame),
     Ping(PingFrame),
     Goaway(GoawayFrame),
-    WindowUpdate,
+    WindowUpdate(WindowUpdateFrame),
     Continuation,
 }
 impl Frame {
@@ -94,7 +96,11 @@ impl Frame {
             }
             FRAME_TYPE_PING => track!(PingFrame::from_vec(header, payload).map(Frame::Ping)),
             FRAME_TYPE_GOAWAY => track!(GoawayFrame::from_vec(header, payload).map(Frame::Goaway)),
-            FRAME_TYPE_WINDOW_UPDATE => unimplemented!(),
+            FRAME_TYPE_WINDOW_UPDATE => {
+                track!(WindowUpdateFrame::from_vec(header, payload).map(
+                    Frame::WindowUpdate,
+                ))
+            }
             FRAME_TYPE_CONTINUATION => unimplemented!(),
             other => track_panic!(ErrorKind::Other, "Unknown payload type: {}", other),
         }
