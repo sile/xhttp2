@@ -9,6 +9,7 @@ pub use self::data::DataFrame;
 pub use self::headers::HeadersFrame;
 pub use self::priority::PriorityFrame;
 pub use self::rst_stream::RstStreamFrame;
+pub use self::settings::SettingsFrame;
 
 use self::header::{FrameHeader, ReadFrameHeader};
 
@@ -19,6 +20,7 @@ mod header;
 mod headers;
 mod priority;
 mod rst_stream;
+mod settings;
 
 pub const FRAME_TYPE_DATA: u8 = 0x0;
 pub const FRAME_TYPE_HEADERS: u8 = 0x1;
@@ -32,6 +34,7 @@ pub const FRAME_TYPE_WINDOW_UPDATE: u8 = 0x8;
 pub const FRAME_TYPE_CONTINUATION: u8 = 0x9;
 
 mod flags {
+    pub const ACK: u8 = 0x01;
     pub const END_STREAM: u8 = 0x01;
     pub const END_HEADERS: u8 = 0x04;
     pub const PADDED: u8 = 0x08;
@@ -49,7 +52,7 @@ pub enum Frame {
     Headers(HeadersFrame),
     Priority(PriorityFrame),
     RstStream(RstStreamFrame),
-    Settings,
+    Settings(SettingsFrame),
     PushPromize,
     Ping,
     Goaway,
@@ -73,7 +76,11 @@ impl Frame {
                     Frame::RstStream,
                 ))
             }
-            FRAME_TYPE_SETTINGS => unimplemented!(),
+            FRAME_TYPE_SETTINGS => {
+                track!(SettingsFrame::from_vec(header, payload).map(
+                    Frame::Settings,
+                ))
+            }
             FRAME_TYPE_PUSH_PROMISE => unimplemented!(),
             FRAME_TYPE_PING => unimplemented!(),
             FRAME_TYPE_GOAWAY => unimplemented!(),
