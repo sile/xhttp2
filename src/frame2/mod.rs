@@ -7,6 +7,7 @@ use handy_async::io::futures::ReadExact;
 
 pub use self::data::DataFrame;
 pub use self::headers::HeadersFrame;
+pub use self::ping::PingFrame;
 pub use self::priority::PriorityFrame;
 pub use self::push_promise::PushPromiseFrame;
 pub use self::rst_stream::RstStreamFrame;
@@ -19,6 +20,7 @@ use {Result, Error, ErrorKind};
 mod data;
 mod header;
 mod headers;
+mod ping;
 mod priority;
 mod push_promise;
 mod rst_stream;
@@ -56,7 +58,7 @@ pub enum Frame {
     RstStream(RstStreamFrame),
     Settings(SettingsFrame),
     PushPromise(PushPromiseFrame),
-    Ping,
+    Ping(PingFrame),
     Goaway,
     WindowUpdate,
     Continuation,
@@ -88,7 +90,7 @@ impl Frame {
                     Frame::PushPromise,
                 ))
             }
-            FRAME_TYPE_PING => unimplemented!(),
+            FRAME_TYPE_PING => track!(PingFrame::from_vec(header, payload).map(Frame::Ping)),
             FRAME_TYPE_GOAWAY => unimplemented!(),
             FRAME_TYPE_WINDOW_UPDATE => unimplemented!(),
             FRAME_TYPE_CONTINUATION => unimplemented!(),
