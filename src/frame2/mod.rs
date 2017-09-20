@@ -6,6 +6,7 @@ use handy_async::io::AsyncRead;
 use handy_async::io::futures::ReadExact;
 
 pub use self::data::DataFrame;
+pub use self::goaway::GoawayFrame;
 pub use self::headers::HeadersFrame;
 pub use self::ping::PingFrame;
 pub use self::priority::PriorityFrame;
@@ -18,6 +19,7 @@ use self::header::{FrameHeader, ReadFrameHeader};
 use {Result, Error, ErrorKind};
 
 mod data;
+mod goaway;
 mod header;
 mod headers;
 mod ping;
@@ -59,7 +61,7 @@ pub enum Frame {
     Settings(SettingsFrame),
     PushPromise(PushPromiseFrame),
     Ping(PingFrame),
-    Goaway,
+    Goaway(GoawayFrame),
     WindowUpdate,
     Continuation,
 }
@@ -91,7 +93,7 @@ impl Frame {
                 ))
             }
             FRAME_TYPE_PING => track!(PingFrame::from_vec(header, payload).map(Frame::Ping)),
-            FRAME_TYPE_GOAWAY => unimplemented!(),
+            FRAME_TYPE_GOAWAY => track!(GoawayFrame::from_vec(header, payload).map(Frame::Goaway)),
             FRAME_TYPE_WINDOW_UPDATE => unimplemented!(),
             FRAME_TYPE_CONTINUATION => unimplemented!(),
             other => track_panic!(ErrorKind::Other, "Unknown payload type: {}", other),
