@@ -9,7 +9,7 @@ pub use error::{Error, ErrorKind};
 
 macro_rules! track_io {
     ($expr:expr) => {
-        $expr.map_err(::Error::from)
+        track!($expr.map_err(::Error::from))
     }
 }
 

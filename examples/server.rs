@@ -2,13 +2,14 @@ extern crate clap;
 extern crate futures;
 extern crate handy_async;
 extern crate fibers;
+extern crate xhttp2;
 
 use std::io;
 use clap::{App, Arg};
 use fibers::{Spawn, Executor, ThreadPoolExecutor};
 use futures::{Future, Stream};
-use handy_async::io::{AsyncWrite, ReadFrom};
-use handy_async::pattern::AllowPartial;
+use handy_async::io::AsyncWrite;
+use xhttp2::frame::FrameReceiver;
 
 fn main() {
     let matches = App::new("tcp_echo_srv")
@@ -54,17 +55,18 @@ fn main() {
                             );
 
                             // reader
-                            let stream = vec![0; 1024].allow_partial().into_stream(reader);
-                            stream.map_err(|e| e.into_error()).fold(
-                                tx,
-                                |tx, (mut buf, len)| {
-                                    buf.truncate(len);
-                                    println!("# RECV: {} bytes", buf.len());
-                                    println!("# RECV: {:?}", buf);
-                                    tx.send(buf).expect("Cannot send");
-                                    Ok(tx) as io::Result<_>
-                                },
-                            )
+                            xhttp2::preface::read_preface(reader)
+                                .and_then(|reader| {
+                                    let stream = FrameReceiver::new(reader);
+                                    stream.fold(tx, |tx, frame| {
+                                        println!("# RECV: {:?}", frame);
+                                        Ok(tx) as xhttp2::Result<_>
+                                    })
+                                })
+                                .map_err(|e| {
+                                    println!("{}", e);
+                                    io::Error::new(io::ErrorKind::Other, e)
+                                })
                         })
                         .then(|r| {
                             println!("# Client finished: {:?}", r);

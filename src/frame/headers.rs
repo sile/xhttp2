@@ -47,7 +47,7 @@ impl HeadersFrame {
         fragment_len -= padding_len as usize;
 
         let priority = if (header.flags & flags::PRIORITY) != 0 {
-            fragment_len -= 4;
+            fragment_len -= 5;
             Some(track!(Priority::read_from(&mut reader))?)
         } else {
             None
