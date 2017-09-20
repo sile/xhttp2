@@ -32,16 +32,16 @@ mod rst_stream;
 mod settings;
 mod window_update;
 
-pub const FRAME_TYPE_DATA: u8 = 0x0;
-pub const FRAME_TYPE_HEADERS: u8 = 0x1;
-pub const FRAME_TYPE_PRIORITY: u8 = 0x2;
-pub const FRAME_TYPE_RST_STREAM: u8 = 0x3;
-pub const FRAME_TYPE_SETTINGS: u8 = 0x4;
-pub const FRAME_TYPE_PUSH_PROMISE: u8 = 0x5;
-pub const FRAME_TYPE_PING: u8 = 0x6;
-pub const FRAME_TYPE_GOAWAY: u8 = 0x7;
-pub const FRAME_TYPE_WINDOW_UPDATE: u8 = 0x8;
-pub const FRAME_TYPE_CONTINUATION: u8 = 0x9;
+const FRAME_TYPE_DATA: u8 = 0x0;
+const FRAME_TYPE_HEADERS: u8 = 0x1;
+const FRAME_TYPE_PRIORITY: u8 = 0x2;
+const FRAME_TYPE_RST_STREAM: u8 = 0x3;
+const FRAME_TYPE_SETTINGS: u8 = 0x4;
+const FRAME_TYPE_PUSH_PROMISE: u8 = 0x5;
+const FRAME_TYPE_PING: u8 = 0x6;
+const FRAME_TYPE_GOAWAY: u8 = 0x7;
+const FRAME_TYPE_WINDOW_UPDATE: u8 = 0x8;
+const FRAME_TYPE_CONTINUATION: u8 = 0x9;
 
 mod flags {
     pub const ACK: u8 = 0x01;
@@ -54,6 +54,11 @@ mod flags {
 #[derive(Debug)]
 pub struct Settings {
     pub max_frame_size: u32,
+}
+impl Default for Settings {
+    fn default() -> Self {
+        Settings { max_frame_size: 4096 }
+    }
 }
 
 #[derive(Debug)]
@@ -119,7 +124,8 @@ pub struct FrameReceiver<R> {
     phase: Phase<ReadFrameHeader<R>, ReadFrame<R>>,
 }
 impl<R: Read> FrameReceiver<R> {
-    pub fn new(reader: R, settings: Settings) -> Self {
+    pub fn new(reader: R) -> Self {
+        let settings = Settings::default();
         let phase = Phase::A(ReadFrameHeader::new(reader));
         FrameReceiver { settings, phase }
     }

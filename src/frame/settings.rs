@@ -20,6 +20,21 @@ pub enum SettingsFrame {
     Ack,
 }
 impl SettingsFrame {
+    pub fn is_ack(&self) -> bool {
+        if let SettingsFrame::Ack = *self {
+            true
+        } else {
+            false
+        }
+    }
+    pub fn settings(&self) -> &[Setting] {
+        if let SettingsFrame::Syn(ref settings) = *self {
+            settings
+        } else {
+            &[][..]
+        }
+    }
+
     pub fn from_vec(header: &FrameHeader, payload: Vec<u8>) -> Result<Self> {
         track_assert_eq!(header.stream_id, 0, ErrorKind::ProtocolError);
         if (header.flags & flags::ACK) != 0 {
