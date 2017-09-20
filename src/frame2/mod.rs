@@ -1,14 +1,22 @@
 use std::io::Read;
+use byteorder::{BigEndian, ReadBytesExt};
 use futures::{Future, Stream, Poll, Async};
 use handy_async::future::Phase;
 use handy_async::io::AsyncRead;
 use handy_async::io::futures::ReadExact;
 
+pub use self::data::DataFrame;
+pub use self::headers::HeadersFrame;
+pub use self::priority::PriorityFrame;
+
 use self::header::{FrameHeader, ReadFrameHeader};
 
-use {Error, ErrorKind};
+use {Result, Error, ErrorKind};
 
+mod data;
 mod header;
+mod headers;
+mod priority;
 
 pub const FRAME_TYPE_DATA: u8 = 0x0;
 pub const FRAME_TYPE_HEADERS: u8 = 0x1;
@@ -21,6 +29,13 @@ pub const FRAME_TYPE_GOAWAY: u8 = 0x7;
 pub const FRAME_TYPE_WINDOW_UPDATE: u8 = 0x8;
 pub const FRAME_TYPE_CONTINUATION: u8 = 0x9;
 
+mod flags {
+    pub const END_STREAM: u8 = 0x01;
+    pub const END_HEADERS: u8 = 0x04;
+    pub const PADDED: u8 = 0x08;
+    pub const PRIORITY: u8 = 0x20;
+}
+
 #[derive(Debug)]
 pub struct Settings {
     pub max_frame_size: u32,
@@ -28,9 +43,9 @@ pub struct Settings {
 
 #[derive(Debug)]
 pub enum Frame {
-    Data,
-    Headers,
-    Priority,
+    Data(DataFrame),
+    Headers(HeadersFrame),
+    Priority(PriorityFrame),
     RstStream,
     Settings,
     PushPromize,
@@ -38,6 +53,29 @@ pub enum Frame {
     Goaway,
     WindowUpdate,
     Continuation,
+}
+impl Frame {
+    fn from_vec(header: &FrameHeader, payload: Vec<u8>) -> Result<Self> {
+        match header.payload_type {
+            FRAME_TYPE_DATA => track!(DataFrame::from_vec(header, payload)).map(Frame::Data),
+            FRAME_TYPE_HEADERS => {
+                track!(HeadersFrame::from_vec(header, payload).map(Frame::Headers))
+            }
+            FRAME_TYPE_PRIORITY => {
+                track!(PriorityFrame::from_vec(header, payload).map(
+                    Frame::Priority,
+                ))
+            }
+            FRAME_TYPE_RST_STREAM => unimplemented!(),
+            FRAME_TYPE_SETTINGS => unimplemented!(),
+            FRAME_TYPE_PUSH_PROMISE => unimplemented!(),
+            FRAME_TYPE_PING => unimplemented!(),
+            FRAME_TYPE_GOAWAY => unimplemented!(),
+            FRAME_TYPE_WINDOW_UPDATE => unimplemented!(),
+            FRAME_TYPE_CONTINUATION => unimplemented!(),
+            other => track_panic!(ErrorKind::Other, "Unknown payload type: {}", other),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -56,7 +94,7 @@ impl<R: Read> Stream for FrameReceiver<R> {
     type Error = Error;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         while let Async::Ready(phase) = track!(self.phase.poll().map_err(Error::from))? {
-            let next = match phase {
+            let (next, frame) = match phase {
                 Phase::A((reader, header)) => {
                     track_assert!(
                         header.payload_length <= self.settings.max_frame_size,
@@ -65,11 +103,15 @@ impl<R: Read> Stream for FrameReceiver<R> {
                         header.payload_length,
                         self.settings.max_frame_size
                     );
-                    Phase::B(ReadFrame::new(reader, header))
+                    (Phase::B(ReadFrame::new(reader, header)), None)
                 }
+                Phase::B((reader, frame)) => (Phase::A(ReadFrameHeader::new(reader)), Some(frame)),
                 _ => unreachable!(),
             };
             self.phase = next;
+            if let Some(frame) = frame {
+                return Ok(Async::Ready(Some(frame)));
+            }
         }
         Ok(Async::NotReady)
     }
@@ -94,9 +136,29 @@ impl<R: Read> Future for ReadFrame<R> {
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         if let Async::Ready((reader, buf)) = track!(self.future.poll().map_err(Error::from))? {
-            let frame = track!(Frame::from_vec(buf))?;
+            let frame = track!(Frame::from_vec(&self.header, buf))?;
             return Ok(Async::Ready((reader, frame)));
         }
         Ok(Async::NotReady)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Priority {
+    pub exclusive: bool,
+    pub stream_dependency: u32,
+    pub weight_minus_one: u8,
+}
+impl Priority {
+    pub fn read_from<R: Read>(mut reader: R) -> Result<Self> {
+        let value = track!(reader.read_u32::<BigEndian>().map_err(Error::from))?;
+        let exclusive = (value >> 31) == 1;
+        let stream_dependency = value & 0x7FFF_FFFF;
+        let weight_minus_one = track!(reader.read_u8().map_err(Error::from))?;
+        Ok(Priority {
+            exclusive,
+            stream_dependency,
+            weight_minus_one,
+        })
     }
 }

@@ -11,7 +11,7 @@ pub use error::{Error, ErrorKind};
 
 macro_rules! track_io {
     ($expr:expr) => {
-        $expr.map_err(Error::from)
+        $expr.map_err(::Error::from)
     }
 }
 
