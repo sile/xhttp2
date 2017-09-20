@@ -20,7 +20,7 @@ pub struct RstStreamFrame {
 impl RstStreamFrame {
     pub fn from_vec(header: &FrameHeader, payload: Vec<u8>) -> Result<Self> {
         track_assert_ne!(header.stream_id, 0, ErrorKind::ProtocolError);
-        track_assert_eq!(payload.len(), 5, ErrorKind::FrameSizeError);
+        track_assert_eq!(payload.len(), 4, ErrorKind::FrameSizeError);
 
         let code = BigEndian::read_u32(&payload[..]);
         let error = Error::from_code(code);
