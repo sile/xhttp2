@@ -4,8 +4,52 @@ use handy_async::io::AsyncIoError;
 use trackable::error::TrackableError;
 use trackable::error::{ErrorKind as TrackableErrorKind, ErrorKindExt};
 
+/// https://tools.ietf.org/html/rfc7540#section-11.4
 #[derive(Debug, Clone)]
 pub enum ErrorKind {
+    /// Graceful shutdown.
+    NoError,
+
+    /// Protocol error detected.
+    ProtocolError,
+
+    /// Implementation fault.
+    InternalError,
+
+    /// Flow-control limits exceeded.
+    FlowControlError,
+
+    /// Settings not acknowledged.
+    SettingsTimeout,
+
+    /// Frame received for closed stream.
+    StreamClosed,
+
+    /// Frame size incorrect.
+    FrameSizeError,
+
+    /// Stream not processed.
+    RefusedStream,
+
+    /// Stream cancelled.
+    Cancel,
+
+    /// Compression state not updated.
+    CompressionError,
+
+    /// TCP connection error for CONNECT method.
+    ConnectError,
+
+    /// Processing capacity exceeded.
+    EnhanceYourCalm,
+
+    /// Negotiated TLS parameters not acceptable.
+    InadequateSecurity,
+
+    /// Use HTTP/1.1 for the request.
+    Http11Required,
+
+    // TODO: delete
     Invalid,
     Io,
     Other,
