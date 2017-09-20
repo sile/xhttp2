@@ -8,6 +8,7 @@ use handy_async::io::futures::ReadExact;
 pub use self::data::DataFrame;
 pub use self::headers::HeadersFrame;
 pub use self::priority::PriorityFrame;
+pub use self::rst_stream::RstStreamFrame;
 
 use self::header::{FrameHeader, ReadFrameHeader};
 
@@ -17,6 +18,7 @@ mod data;
 mod header;
 mod headers;
 mod priority;
+mod rst_stream;
 
 pub const FRAME_TYPE_DATA: u8 = 0x0;
 pub const FRAME_TYPE_HEADERS: u8 = 0x1;
@@ -46,7 +48,7 @@ pub enum Frame {
     Data(DataFrame),
     Headers(HeadersFrame),
     Priority(PriorityFrame),
-    RstStream,
+    RstStream(RstStreamFrame),
     Settings,
     PushPromize,
     Ping,
@@ -66,7 +68,11 @@ impl Frame {
                     Frame::Priority,
                 ))
             }
-            FRAME_TYPE_RST_STREAM => unimplemented!(),
+            FRAME_TYPE_RST_STREAM => {
+                track!(RstStreamFrame::from_vec(header, payload).map(
+                    Frame::RstStream,
+                ))
+            }
             FRAME_TYPE_SETTINGS => unimplemented!(),
             FRAME_TYPE_PUSH_PROMISE => unimplemented!(),
             FRAME_TYPE_PING => unimplemented!(),
