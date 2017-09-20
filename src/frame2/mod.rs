@@ -5,6 +5,7 @@ use handy_async::future::Phase;
 use handy_async::io::AsyncRead;
 use handy_async::io::futures::ReadExact;
 
+pub use self::continuation::ContinuationFrame;
 pub use self::data::DataFrame;
 pub use self::goaway::GoawayFrame;
 pub use self::headers::HeadersFrame;
@@ -19,6 +20,7 @@ use self::header::{FrameHeader, ReadFrameHeader};
 
 use {Result, Error, ErrorKind};
 
+mod continuation;
 mod data;
 mod goaway;
 mod header;
@@ -65,7 +67,7 @@ pub enum Frame {
     Ping(PingFrame),
     Goaway(GoawayFrame),
     WindowUpdate(WindowUpdateFrame),
-    Continuation,
+    Continuation(ContinuationFrame),
 }
 impl Frame {
     fn from_vec(header: &FrameHeader, payload: Vec<u8>) -> Result<Self> {
@@ -101,7 +103,11 @@ impl Frame {
                     Frame::WindowUpdate,
                 ))
             }
-            FRAME_TYPE_CONTINUATION => unimplemented!(),
+            FRAME_TYPE_CONTINUATION => {
+                track!(ContinuationFrame::from_vec(header, payload).map(
+                    Frame::Continuation,
+                ))
+            }
             other => track_panic!(ErrorKind::Other, "Unknown payload type: {}", other),
         }
     }
