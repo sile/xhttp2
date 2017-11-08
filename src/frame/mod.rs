@@ -113,7 +113,10 @@ impl Frame {
                     Frame::Continuation,
                 ))
             }
-            other => track_panic!(ErrorKind::Other, "Unknown payload type: {}", other),
+            other => {
+                // TODO: ignore
+                track_panic!(ErrorKind::InternalError, "Unknown payload type: {}", other)
+            }
         }
     }
 }
@@ -139,7 +142,7 @@ impl<R: Read> Stream for FrameReceiver<R> {
                 Phase::A((reader, header)) => {
                     track_assert!(
                         header.payload_length <= self.settings.max_frame_size,
-                        ErrorKind::Other,
+                        ErrorKind::FrameSizeError,
                         "Too large frame size: value={}, max={}",
                         header.payload_length,
                         self.settings.max_frame_size

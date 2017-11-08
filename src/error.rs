@@ -48,11 +48,6 @@ pub enum ErrorKind {
 
     /// Use HTTP/1.1 for the request.
     Http11Required,
-
-    // TODO: delete
-    Invalid,
-    Io,
-    Other,
 }
 impl TrackableErrorKind for ErrorKind {}
 
@@ -83,12 +78,12 @@ impl Error {
 }
 impl From<std::io::Error> for Error {
     fn from(f: std::io::Error) -> Self {
-        ErrorKind::Io.cause(f).into()
+        ErrorKind::InternalError.cause(f).into()
     }
 }
 impl<T> From<AsyncIoError<T>> for Error {
     fn from(f: AsyncIoError<T>) -> Self {
-        ErrorKind::Io.cause(f.into_error()).into()
+        ErrorKind::InternalError.cause(f.into_error()).into()
     }
 }
 impl<A, B, C, D, E> From<Phase<A, B, C, D, E>> for Error

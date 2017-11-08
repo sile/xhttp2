@@ -19,7 +19,7 @@ impl<R: Read> Future for ReadPreface<R> {
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         if let Async::Ready((reader, bytes)) = track!(self.0.poll().map_err(Error::from))? {
-            track_assert_eq!(bytes, PREFACE_BYTES, ErrorKind::Invalid);
+            track_assert_eq!(bytes, PREFACE_BYTES, ErrorKind::ProtocolError); // TODO
             Ok(Async::Ready(reader))
         } else {
             Ok(Async::NotReady)
