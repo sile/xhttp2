@@ -15,6 +15,7 @@ macro_rules! track_io {
 
 pub mod frame;
 pub mod preface;
+pub mod priority;
 pub mod stream;
 
 mod error;

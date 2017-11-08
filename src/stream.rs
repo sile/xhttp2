@@ -7,6 +7,12 @@ impl StreamId {
         track_assert_eq!(id >> 31, 0, ErrorKind::InternalError);
         Ok(StreamId(id))
     }
+    pub fn connection_control_stream_id() -> Self {
+        StreamId(0)
+    }
+    pub(crate) fn new_unchecked(id: u32) -> Self {
+        StreamId(id)
+    }
     pub fn as_u32(&self) -> u32 {
         self.0
     }
