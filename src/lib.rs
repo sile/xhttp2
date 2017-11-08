@@ -13,6 +13,12 @@ macro_rules! track_io {
     }
 }
 
+macro_rules! track_async_io {
+    ($expr:expr) => {
+        track!($expr.map_err(::Error::from))
+    }
+}
+
 pub mod frame;
 pub mod preface;
 pub mod priority;
@@ -28,6 +34,7 @@ mod test {
     use hpack_codec::Decoder as HpackDecoder;
 
     use frame::{FrameReceiver, Frame};
+    use stream::StreamId;
     use super::*;
 
     #[test]
@@ -65,7 +72,7 @@ mod test {
         // the header of the second frame
         let frame = track_try_unwrap!(frame_rx.next().expect("second frame"));
         if let Frame::Headers(frame) = frame {
-            assert_eq!(frame.stream_id, 1);
+            assert_eq!(frame.stream_id, StreamId::from(1u8));
             assert_eq!(frame.padding_len, 0);
             assert!(!frame.end_stream);
             assert!(frame.end_headers);
@@ -102,7 +109,7 @@ mod test {
         // the header of the third frame
         let frame = track_try_unwrap!(frame_rx.next().expect("second frame"));
         if let Frame::Data(frame) = frame {
-            assert_eq!(frame.stream_id, 1);
+            assert_eq!(frame.stream_id, StreamId::from(1u8));
             assert!(frame.end_stream);
             assert_eq!(frame.data, [0, 0, 0, 0, 6, 10, 4, 119, 100, 103, 107]);
         } else {

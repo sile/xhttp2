@@ -1,8 +1,8 @@
-use std::io::Read;
+use std::io::{Write, Read};
 use byteorder::{BigEndian, ByteOrder};
 use futures::{Future, Poll, Async};
-use handy_async::io::AsyncRead;
-use handy_async::io::futures::ReadExact;
+use handy_async::io::{AsyncRead, AsyncWrite};
+use handy_async::io::futures::{ReadExact, WriteAll};
 
 use Error;
 use stream::StreamId;
@@ -58,15 +58,33 @@ impl FrameHeader {
     pub fn read_from<R: Read>(reader: R) -> ReadFrameHeader<R> {
         ReadFrameHeader(reader.async_read_exact([0; 9]))
     }
+    pub fn write_into<W: Write>(self, writer: W) -> WriteFrameHeader<W> {
+        let mut bytes = [0; 9];
+
+        BigEndian::write_u24(&mut bytes[0..3], self.payload_length);
+        bytes[3] = self.payload_type;
+        bytes[4] = self.flags;
+        BigEndian::write_u32(&mut bytes[5..9], self.stream_id.as_u32());
+
+        WriteFrameHeader(writer.async_write_all(bytes))
+    }
 }
 
 #[derive(Debug)]
 pub struct ReadFrameHeader<R>(ReadExact<R, [u8; 9]>);
+impl<R> ReadFrameHeader<R> {
+    pub fn reader(&self) -> &R {
+        self.0.reader()
+    }
+    pub fn reader_mut(&mut self) -> &mut R {
+        self.0.reader_mut()
+    }
+}
 impl<R: Read> Future for ReadFrameHeader<R> {
     type Item = (R, FrameHeader);
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        if let Async::Ready((reader, bytes)) = track!(self.0.poll().map_err(Error::from))? {
+        if let Async::Ready((reader, bytes)) = track_async_io!(self.0.poll())? {
             let payload_length = BigEndian::read_u24(&bytes[0..3]);
             let payload_type = bytes[3];
             let flags = bytes[4];
@@ -80,6 +98,28 @@ impl<R: Read> Future for ReadFrameHeader<R> {
                 stream_id,
             };
             Ok(Async::Ready((reader, header)))
+        } else {
+            Ok(Async::NotReady)
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct WriteFrameHeader<W>(WriteAll<W, [u8; 9]>);
+impl<W> WriteFrameHeader<W> {
+    pub fn writer(&self) -> &W {
+        self.0.writer()
+    }
+    pub fn writer_mut(&mut self) -> &mut W {
+        self.0.writer_mut()
+    }
+}
+impl<W: Write> Future for WriteFrameHeader<W> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        if let Async::Ready((writer, _)) = track_async_io!(self.0.poll())? {
+            Ok(Async::Ready(writer))
         } else {
             Ok(Async::NotReady)
         }
