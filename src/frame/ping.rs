@@ -20,7 +20,10 @@ pub struct PingFrame {
 }
 impl PingFrame {
     pub fn from_vec(header: &FrameHeader, payload: Vec<u8>) -> Result<Self> {
-        track_assert_eq!(header.stream_id, 0, ErrorKind::ProtocolError);
+        track_assert!(
+            header.stream_id.is_connection_control_stream(),
+            ErrorKind::ProtocolError
+        );
         track_assert_eq!(payload.len(), 8, ErrorKind::FrameSizeError);
 
         let mut data = [0; 8];

@@ -16,14 +16,14 @@ pub use self::rst_stream::RstStreamFrame;
 pub use self::settings::SettingsFrame;
 pub use self::window_update::WindowUpdateFrame;
 
-use self::header::{FrameHeader, ReadFrameHeader};
+use self::frame_header::{FrameHeader, ReadFrameHeader};
 
 use {Result, Error, ErrorKind};
 
 mod continuation;
 mod data;
+mod frame_header;
 mod goaway;
-mod header;
 mod headers;
 mod ping;
 mod priority;
@@ -129,7 +129,7 @@ pub struct FrameReceiver<R> {
 impl<R: Read> FrameReceiver<R> {
     pub fn new(reader: R) -> Self {
         let settings = Settings::default();
-        let phase = Phase::A(ReadFrameHeader::new(reader));
+        let phase = Phase::A(FrameHeader::read_from(reader));
         FrameReceiver { settings, phase }
     }
 }
@@ -149,7 +149,10 @@ impl<R: Read> Stream for FrameReceiver<R> {
                     );
                     (Phase::B(ReadFrame::new(reader, header)), None)
                 }
-                Phase::B((reader, frame)) => (Phase::A(ReadFrameHeader::new(reader)), Some(frame)),
+                Phase::B((reader, frame)) => (
+                    Phase::A(FrameHeader::read_from(reader)),
+                    Some(frame),
+                ),
                 _ => unreachable!(),
             };
             self.phase = next;

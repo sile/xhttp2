@@ -1,4 +1,5 @@
 use {Result, ErrorKind};
+use stream::StreamId;
 use super::FrameHeader;
 use super::flags;
 
@@ -17,14 +18,17 @@ use super::flags;
 /// ```
 #[derive(Debug, Clone)]
 pub struct DataFrame {
-    pub stream_id: u32,
+    pub stream_id: StreamId,
     pub end_stream: bool,
     pub padding_len: u8,
     pub data: Vec<u8>,
 }
 impl DataFrame {
     pub fn from_vec(header: &FrameHeader, mut payload: Vec<u8>) -> Result<Self> {
-        track_assert_ne!(header.stream_id, 0, ErrorKind::ProtocolError);
+        track_assert!(
+            !header.stream_id.is_connection_control_stream(),
+            ErrorKind::ProtocolError
+        );
 
         let mut padding_len = 0;
         if (header.flags & flags::PADDED) != 0 {

@@ -1,5 +1,9 @@
 use {Result, ErrorKind};
 
+/// Stream Identifier:  A stream identifier (see Section 5.1.1) expressed
+/// as an unsigned 31-bit integer.  The value 0x0 is reserved for
+/// frames that are associated with the connection as a whole as
+/// opposed to an individual stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StreamId(u32);
 impl StreamId {
@@ -9,6 +13,9 @@ impl StreamId {
     }
     pub fn connection_control_stream_id() -> Self {
         StreamId(0)
+    }
+    pub fn is_connection_control_stream(&self) -> bool {
+        self.0 == 0
     }
     pub(crate) fn new_unchecked(id: u32) -> Self {
         StreamId(id)
