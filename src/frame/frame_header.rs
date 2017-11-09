@@ -1,10 +1,11 @@
-use std::io::Read;
-use byteorder::{ReadBytesExt, BigEndian};
+use std::io::{Write, Read};
+use byteorder::{BigEndian, ByteOrder};
 use futures::{Future, Poll, Async};
-use handy_async::io::AsyncRead;
-use handy_async::io::futures::ReadExact;
+use handy_async::io::{AsyncRead, AsyncWrite};
+use handy_async::io::futures::{ReadExact, WriteAll};
 
-use {Result, Error};
+use Error;
+use stream::StreamId;
 
 /// https://tools.ietf.org/html/rfc7540#section-4
 ///
@@ -21,7 +22,7 @@ use {Result, Error};
 ///
 ///                          Figure 1: Frame Layout
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct FrameHeader {
     /// Length:  The length of the frame payload expressed as an unsigned
     /// 24-bit integer.  Values greater than 2^14 (16,384) MUST NOT be
@@ -51,37 +52,74 @@ pub struct FrameHeader {
     /// R: A reserved 1-bit field.  The semantics of this bit are undefined,
     /// and the bit MUST remain unset (0x0) when sending and MUST be
     /// ignored when receiving.
-    pub stream_id: u32,
+    pub stream_id: StreamId,
 }
 impl FrameHeader {
-    pub fn read_from<R: Read>(mut reader: R) -> Result<Self> {
-        let payload_length = track_io!(reader.read_u24::<BigEndian>())?;
-        let payload_type = track_io!(reader.read_u8())?;
-        let flags = track_io!(reader.read_u8())?;
-        let stream_id = track_io!(reader.read_u32::<BigEndian>())?;
-        Ok(FrameHeader {
-            payload_length,
-            payload_type,
-            flags,
-            stream_id: stream_id & 0x7FFFFFFF,
-        })
+    pub fn read_from<R: Read>(reader: R) -> ReadFrameHeader<R> {
+        ReadFrameHeader(reader.async_read_exact([0; 9]))
+    }
+    pub fn write_into<W: Write>(self, writer: W) -> WriteFrameHeader<W> {
+        let mut bytes = [0; 9];
+
+        BigEndian::write_u24(&mut bytes[0..3], self.payload_length);
+        bytes[3] = self.payload_type;
+        bytes[4] = self.flags;
+        BigEndian::write_u32(&mut bytes[5..9], self.stream_id.as_u32());
+
+        WriteFrameHeader(writer.async_write_all(bytes))
     }
 }
 
 #[derive(Debug)]
 pub struct ReadFrameHeader<R>(ReadExact<R, [u8; 9]>);
-impl<R: Read> ReadFrameHeader<R> {
-    pub fn new(reader: R) -> Self {
-        ReadFrameHeader(reader.async_read_exact([0; 9]))
+impl<R> ReadFrameHeader<R> {
+    pub fn reader(&self) -> &R {
+        self.0.reader()
+    }
+    pub fn reader_mut(&mut self) -> &mut R {
+        self.0.reader_mut()
     }
 }
 impl<R: Read> Future for ReadFrameHeader<R> {
     type Item = (R, FrameHeader);
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        if let Async::Ready((reader, bytes)) = track!(self.0.poll().map_err(Error::from))? {
-            let header = track!(FrameHeader::read_from(&bytes[..]))?;
+        if let Async::Ready((reader, bytes)) = track_async_io!(self.0.poll())? {
+            let payload_length = BigEndian::read_u24(&bytes[0..3]);
+            let payload_type = bytes[3];
+            let flags = bytes[4];
+            let stream_id =
+                StreamId::new_unchecked(BigEndian::read_u32(&bytes[5..9]) & 0x7FFF_FFFF);
+
+            let header = FrameHeader {
+                payload_length,
+                payload_type,
+                flags,
+                stream_id,
+            };
             Ok(Async::Ready((reader, header)))
+        } else {
+            Ok(Async::NotReady)
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct WriteFrameHeader<W>(WriteAll<W, [u8; 9]>);
+impl<W> WriteFrameHeader<W> {
+    pub fn writer(&self) -> &W {
+        self.0.writer()
+    }
+    pub fn writer_mut(&mut self) -> &mut W {
+        self.0.writer_mut()
+    }
+}
+impl<W: Write> Future for WriteFrameHeader<W> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        if let Async::Ready((writer, _)) = track_async_io!(self.0.poll())? {
+            Ok(Async::Ready(writer))
         } else {
             Ok(Async::NotReady)
         }

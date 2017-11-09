@@ -2,6 +2,7 @@ use std::io::Read;
 use byteorder::{BigEndian, ReadBytesExt};
 
 use {Result, ErrorKind};
+use stream::StreamId;
 use super::FrameHeader;
 use super::flags;
 
@@ -22,15 +23,18 @@ use super::flags;
 /// ```
 #[derive(Debug, Clone)]
 pub struct PushPromiseFrame {
-    pub stream_id: u32,
-    pub promised_stream_id: u32,
+    pub stream_id: StreamId,
+    pub promised_stream_id: StreamId,
     pub end_headers: bool,
     pub padding_len: u8,
     pub fragment: Vec<u8>,
 }
 impl PushPromiseFrame {
     pub fn from_vec(header: &FrameHeader, payload: Vec<u8>) -> Result<Self> {
-        track_assert_ne!(header.stream_id, 0, ErrorKind::ProtocolError);
+        track_assert!(
+            !header.stream_id.is_connection_control_stream(),
+            ErrorKind::ProtocolError
+        );
 
         let mut reader = &payload[..];
         let mut fragment_len = header.payload_length as usize;
@@ -43,7 +47,8 @@ impl PushPromiseFrame {
         };
         fragment_len -= padding_len as usize;
 
-        let promised_stream_id = track_io!(reader.read_u32::<BigEndian>())? & 0x7FFF_FFFF;
+        let promised_stream_id =
+            StreamId::new_unchecked(track_io!(reader.read_u32::<BigEndian>())? & 0x7FFF_FFFF);
         fragment_len -= 4;
 
         let mut fragment = vec![0; fragment_len];

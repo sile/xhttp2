@@ -1,6 +1,7 @@
 use byteorder::{ByteOrder, BigEndian};
 
 use {Result, ErrorKind};
+use stream::StreamId;
 use super::FrameHeader;
 
 /// https://tools.ietf.org/html/rfc7540#section-6.9
@@ -14,7 +15,7 @@ use super::FrameHeader;
 /// ```
 #[derive(Debug, Clone)]
 pub struct WindowUpdateFrame {
-    pub stream_id: u32,
+    pub stream_id: StreamId,
     pub window_size_increment: u32,
 }
 impl WindowUpdateFrame {

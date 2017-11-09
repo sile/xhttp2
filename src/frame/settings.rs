@@ -36,7 +36,10 @@ impl SettingsFrame {
     }
 
     pub fn from_vec(header: &FrameHeader, payload: Vec<u8>) -> Result<Self> {
-        track_assert_eq!(header.stream_id, 0, ErrorKind::ProtocolError);
+        track_assert!(
+            header.stream_id.is_connection_control_stream(),
+            ErrorKind::ProtocolError
+        );
         if (header.flags & flags::ACK) != 0 {
             track_assert_eq!(payload.len(), 0, ErrorKind::FrameSizeError);
             Ok(SettingsFrame::Ack)

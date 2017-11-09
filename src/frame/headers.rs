@@ -2,6 +2,7 @@ use std::io::Read;
 use byteorder::ReadBytesExt;
 
 use {Result, ErrorKind};
+use stream::StreamId;
 use super::{FrameHeader, Priority};
 use super::flags;
 
@@ -24,7 +25,7 @@ use super::flags;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeadersFrame {
-    pub stream_id: u32,
+    pub stream_id: StreamId,
     pub end_stream: bool,
     pub end_headers: bool,
     pub priority: Option<Priority>,
@@ -33,7 +34,10 @@ pub struct HeadersFrame {
 }
 impl HeadersFrame {
     pub fn from_vec(header: &FrameHeader, payload: Vec<u8>) -> Result<Self> {
-        track_assert_ne!(header.stream_id, 0, ErrorKind::ProtocolError);
+        track_assert!(
+            !header.stream_id.is_connection_control_stream(),
+            ErrorKind::ProtocolError
+        );
 
         let mut reader = &payload[..];
         let mut fragment_len = header.payload_length as usize;
