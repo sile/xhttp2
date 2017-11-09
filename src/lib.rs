@@ -20,6 +20,7 @@ macro_rules! track_async_io {
 }
 
 pub mod frame;
+pub mod frame2;
 pub mod preface;
 pub mod priority;
 pub mod stream;
