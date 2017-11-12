@@ -5,17 +5,20 @@ use handy_async::future::Phase;
 pub use self::ping_frame::PingFrame;
 pub use self::priority_frame::PriorityFrame;
 pub use self::rst_stream_frame::RstStreamFrame;
+pub use self::window_update_frame::WindowUpdateFrame;
 
 use Error;
 use self::frame_header::{FrameHeader, ReadFrameHeader};
 use self::ping_frame::ReadPingFrame;
 use self::priority_frame::ReadPriorityFrame;
 use self::rst_stream_frame::ReadRstStreamFrame;
+use self::window_update_frame::ReadWindowUpdateFrame;
 
 mod frame_header;
 mod ping_frame;
 mod priority_frame;
 mod rst_stream_frame;
+mod window_update_frame;
 
 const FRAME_TYPE_DATA: u8 = 0x0;
 const FRAME_TYPE_HEADERS: u8 = 0x1;
@@ -33,6 +36,7 @@ pub enum Frame {
     Ping(PingFrame),
     Priority(PriorityFrame),
     RstStream(RstStreamFrame),
+    WindowUpdate(WindowUpdateFrame),
 }
 impl Frame {
     pub fn read_from<R: Read>(reader: R) -> ReadFrame<R> {
@@ -85,7 +89,10 @@ impl<R: Read> Future for ReadFrame<R> {
                             Phase::B(ReadFramePayload::Ping(future))
                         }
                         FRAME_TYPE_GOAWAY => unimplemented!(),
-                        FRAME_TYPE_WINDOW_UPDATE => unimplemented!(),
+                        FRAME_TYPE_WINDOW_UPDATE => {
+                            let future = track!(WindowUpdateFrame::read_from(reader, header))?;
+                            Phase::B(ReadFramePayload::WindowUpdate(future))
+                        }
                         FRAME_TYPE_CONTINUATION => unimplemented!(),
                         _ => {
                             // Implementations MUST ignore and discard any frame that has
@@ -110,6 +117,7 @@ enum ReadFramePayload<R> {
     Ping(ReadPingFrame<R>),
     Priority(ReadPriorityFrame<R>),
     RstStream(ReadRstStreamFrame<R>),
+    WindowUpdate(ReadWindowUpdateFrame<R>),
 }
 impl<R> ReadFramePayload<R> {
     pub fn reader(&self) -> &R {
@@ -117,6 +125,7 @@ impl<R> ReadFramePayload<R> {
             ReadFramePayload::Ping(ref f) => f.reader(),
             ReadFramePayload::Priority(ref f) => f.reader(),
             ReadFramePayload::RstStream(ref f) => f.reader(),
+            ReadFramePayload::WindowUpdate(ref f) => f.reader(),
         }
     }
     pub fn reader_mut(&mut self) -> &mut R {
@@ -124,6 +133,7 @@ impl<R> ReadFramePayload<R> {
             ReadFramePayload::Ping(ref mut f) => f.reader_mut(),
             ReadFramePayload::Priority(ref mut f) => f.reader_mut(),
             ReadFramePayload::RstStream(ref mut f) => f.reader_mut(),
+            ReadFramePayload::WindowUpdate(ref mut f) => f.reader_mut(),
         }
     }
 }
@@ -140,6 +150,9 @@ impl<R: Read> Future for ReadFramePayload<R> {
             }
             ReadFramePayload::RstStream(ref mut f) => {
                 Ok(track!(f.poll())?.map(|(r, f)| (r, Frame::RstStream(f))))
+            }
+            ReadFramePayload::WindowUpdate(ref mut f) => {
+                Ok(track!(f.poll())?.map(|(r, f)| (r, Frame::WindowUpdate(f))))
             }
         }
     }
