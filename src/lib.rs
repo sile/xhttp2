@@ -23,6 +23,7 @@ pub mod frame;
 pub mod frame2;
 pub mod preface;
 pub mod priority;
+pub mod setting;
 pub mod stream;
 
 mod error;
