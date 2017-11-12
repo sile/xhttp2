@@ -2,15 +2,18 @@ use std::io::Read;
 use futures::{Future, Poll, Async};
 use handy_async::future::Phase;
 
+pub use self::ping_frame::PingFrame;
 pub use self::priority_frame::PriorityFrame;
 pub use self::rst_stream_frame::RstStreamFrame;
 
 use Error;
 use self::frame_header::{FrameHeader, ReadFrameHeader};
+use self::ping_frame::ReadPingFrame;
 use self::priority_frame::ReadPriorityFrame;
 use self::rst_stream_frame::ReadRstStreamFrame;
 
 mod frame_header;
+mod ping_frame;
 mod priority_frame;
 mod rst_stream_frame;
 
@@ -27,6 +30,7 @@ const FRAME_TYPE_CONTINUATION: u8 = 0x9;
 
 #[derive(Debug)]
 pub enum Frame {
+    Ping(PingFrame),
     Priority(PriorityFrame),
     RstStream(RstStreamFrame),
 }
@@ -76,12 +80,16 @@ impl<R: Read> Future for ReadFrame<R> {
                         }
                         FRAME_TYPE_SETTINGS => unimplemented!(),
                         FRAME_TYPE_PUSH_PROMISE => unimplemented!(),
-                        FRAME_TYPE_PING => unimplemented!(),
+                        FRAME_TYPE_PING => {
+                            let future = track!(PingFrame::read_from(reader, header))?;
+                            Phase::B(ReadFramePayload::Ping(future))
+                        }
                         FRAME_TYPE_GOAWAY => unimplemented!(),
                         FRAME_TYPE_WINDOW_UPDATE => unimplemented!(),
                         FRAME_TYPE_CONTINUATION => unimplemented!(),
                         _ => {
-                            // Implementations MUST ignore and discard any frame that has a type that is unknown.
+                            // Implementations MUST ignore and discard any frame that has
+                            // a type that is unknown.
                             // (RFC 7540#section-4.1)
                             unimplemented!(
                                 "Check payload size and ignore this frame if it is valid"
@@ -99,18 +107,21 @@ impl<R: Read> Future for ReadFrame<R> {
 
 #[derive(Debug)]
 enum ReadFramePayload<R> {
+    Ping(ReadPingFrame<R>),
     Priority(ReadPriorityFrame<R>),
     RstStream(ReadRstStreamFrame<R>),
 }
 impl<R> ReadFramePayload<R> {
     pub fn reader(&self) -> &R {
         match *self {
+            ReadFramePayload::Ping(ref f) => f.reader(),
             ReadFramePayload::Priority(ref f) => f.reader(),
             ReadFramePayload::RstStream(ref f) => f.reader(),
         }
     }
     pub fn reader_mut(&mut self) -> &mut R {
         match *self {
+            ReadFramePayload::Ping(ref mut f) => f.reader_mut(),
             ReadFramePayload::Priority(ref mut f) => f.reader_mut(),
             ReadFramePayload::RstStream(ref mut f) => f.reader_mut(),
         }
@@ -121,6 +132,9 @@ impl<R: Read> Future for ReadFramePayload<R> {
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         match *self {
+            ReadFramePayload::Ping(ref mut f) => {
+                Ok(track!(f.poll())?.map(|(r, f)| (r, Frame::Ping(f))))
+            }
             ReadFramePayload::Priority(ref mut f) => {
                 Ok(track!(f.poll())?.map(|(r, f)| (r, Frame::Priority(f))))
             }
