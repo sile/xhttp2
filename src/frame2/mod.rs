@@ -2,6 +2,7 @@ use std::io::Read;
 use futures::{Future, Poll, Async};
 use handy_async::future::Phase;
 
+pub use self::goaway_frame::GoawayFrame;
 pub use self::ping_frame::PingFrame;
 pub use self::priority_frame::PriorityFrame;
 pub use self::rst_stream_frame::RstStreamFrame;
@@ -9,12 +10,14 @@ pub use self::window_update_frame::WindowUpdateFrame;
 
 use Error;
 use self::frame_header::{FrameHeader, ReadFrameHeader};
+use self::goaway_frame::ReadGoawayFrame;
 use self::ping_frame::ReadPingFrame;
 use self::priority_frame::ReadPriorityFrame;
 use self::rst_stream_frame::ReadRstStreamFrame;
 use self::window_update_frame::ReadWindowUpdateFrame;
 
 mod frame_header;
+mod goaway_frame;
 mod ping_frame;
 mod priority_frame;
 mod rst_stream_frame;
@@ -33,6 +36,7 @@ const FRAME_TYPE_CONTINUATION: u8 = 0x9;
 
 #[derive(Debug)]
 pub enum Frame {
+    Goaway(GoawayFrame),
     Ping(PingFrame),
     Priority(PriorityFrame),
     RstStream(RstStreamFrame),
@@ -88,7 +92,10 @@ impl<R: Read> Future for ReadFrame<R> {
                             let future = track!(PingFrame::read_from(reader, header))?;
                             Phase::B(ReadFramePayload::Ping(future))
                         }
-                        FRAME_TYPE_GOAWAY => unimplemented!(),
+                        FRAME_TYPE_GOAWAY => {
+                            let future = track!(GoawayFrame::read_from(reader, header))?;
+                            Phase::B(ReadFramePayload::Goaway(future))
+                        }
                         FRAME_TYPE_WINDOW_UPDATE => {
                             let future = track!(WindowUpdateFrame::read_from(reader, header))?;
                             Phase::B(ReadFramePayload::WindowUpdate(future))
@@ -114,6 +121,7 @@ impl<R: Read> Future for ReadFrame<R> {
 
 #[derive(Debug)]
 enum ReadFramePayload<R> {
+    Goaway(ReadGoawayFrame<R>),
     Ping(ReadPingFrame<R>),
     Priority(ReadPriorityFrame<R>),
     RstStream(ReadRstStreamFrame<R>),
@@ -122,6 +130,7 @@ enum ReadFramePayload<R> {
 impl<R> ReadFramePayload<R> {
     pub fn reader(&self) -> &R {
         match *self {
+            ReadFramePayload::Goaway(ref f) => f.reader(),
             ReadFramePayload::Ping(ref f) => f.reader(),
             ReadFramePayload::Priority(ref f) => f.reader(),
             ReadFramePayload::RstStream(ref f) => f.reader(),
@@ -130,6 +139,7 @@ impl<R> ReadFramePayload<R> {
     }
     pub fn reader_mut(&mut self) -> &mut R {
         match *self {
+            ReadFramePayload::Goaway(ref mut f) => f.reader_mut(),
             ReadFramePayload::Ping(ref mut f) => f.reader_mut(),
             ReadFramePayload::Priority(ref mut f) => f.reader_mut(),
             ReadFramePayload::RstStream(ref mut f) => f.reader_mut(),
@@ -142,6 +152,9 @@ impl<R: Read> Future for ReadFramePayload<R> {
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         match *self {
+            ReadFramePayload::Goaway(ref mut f) => {
+                Ok(track!(f.poll())?.map(|(r, f)| (r, Frame::Goaway(f))))
+            }
             ReadFramePayload::Ping(ref mut f) => {
                 Ok(track!(f.poll())?.map(|(r, f)| (r, Frame::Ping(f))))
             }
