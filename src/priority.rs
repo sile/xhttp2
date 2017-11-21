@@ -1,6 +1,10 @@
+use std::io::Read;
 use byteorder::{ByteOrder, BigEndian};
+use futures::{Future, Poll};
+use handy_async::io::AsyncRead;
+use handy_async::io::futures::ReadExact;
 
-use {Result, ErrorKind};
+use {Result, ErrorKind, Error};
 use stream::StreamId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -50,6 +54,10 @@ impl Priority {
 
         bytes
     }
+
+    pub fn read_from<R: Read>(reader: R) -> ReadPriority<R> {
+        ReadPriority(reader.async_read_exact([0; 5]))
+    }
 }
 impl Default for Priority {
     fn default() -> Self {
@@ -58,5 +66,26 @@ impl Default for Priority {
             stream_dependency: StreamId::connection_control_stream_id(),
             weight: Weight::from_weight_minus_one(15),
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct ReadPriority<R>(ReadExact<R, [u8; 5]>);
+impl<R> ReadPriority<R> {
+    pub fn reader(&self) -> &R {
+        self.0.reader()
+    }
+    pub fn reader_mut(&mut self) -> &mut R {
+        self.0.reader_mut()
+    }
+}
+impl<R: Read> Future for ReadPriority<R> {
+    type Item = (R, Priority);
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        Ok(track_async_io!(self.0.poll())?.map(|(reader, bytes)| {
+            let priority = Priority::from_bytes(bytes);
+            (reader, priority)
+        }))
     }
 }

@@ -1,43 +1,43 @@
 extern crate byteorder;
 extern crate futures;
 extern crate handy_async;
-extern crate hpack_codec;
 #[macro_use]
 extern crate trackable;
 
 pub use error::{Error, ErrorKind};
 
-macro_rules! track_io {
-    ($expr:expr) => {
-        track!($expr.map_err(::Error::from))
-    }
-}
+// TODO: remove
+// macro_rules! track_io {
+//     ($expr:expr) => {
+//         track!($expr.map_err(::Error::from))
+//     }
+// }
 
 macro_rules! track_async_io {
     ($expr:expr) => {
         track!($expr.map_err(::Error::from))
-    }
+    } 
 }
 
+pub mod connection;
 pub mod frame;
-pub mod frame2;
 pub mod preface;
 pub mod priority;
 pub mod setting;
 pub mod stream;
 
 mod error;
+mod aux_futures;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(test)]
 mod test {
-    use futures::{Future, Stream};
-    use hpack_codec::Decoder as HpackDecoder;
+    use std::io::Read;
+    use futures::Future;
 
-    use frame::{FrameReceiver, Frame};
-    use stream::StreamId;
     use super::*;
+    use super::frame::Frame;
 
     #[test]
     fn it_works() {
@@ -61,64 +61,49 @@ mod test {
         let input = track_try_unwrap!(preface::read_preface(&input[..]).wait());
         assert_eq!(input.len(), data.len() - preface::PREFACE_BYTES.len());
 
-        // the header of the first frame
-        let mut frame_rx = FrameReceiver::new(&input[..]).wait();
-        let frame = track_try_unwrap!(frame_rx.next().expect("first frame"));
-        if let Frame::Settings(frame) = frame {
+        // the first frame
+        let frame = track_try_unwrap!(Frame::read_from(&input[..]).wait());
+        let input = if let Frame::Settings { io: input, frame } = frame {
             assert!(!frame.is_ack());
             assert!(frame.settings().is_empty());
+            input
         } else {
             panic!("{:?}", frame);
-        }
+        };
 
-        // the header of the second frame
-        let frame = track_try_unwrap!(frame_rx.next().expect("second frame"));
-        if let Frame::Headers(frame) = frame {
-            assert_eq!(frame.stream_id, StreamId::from(1u8));
-            assert_eq!(frame.padding_len, 0);
+        // the second frame
+        let frame = track_try_unwrap!(Frame::read_from(&input[..]).wait());
+        let input = if let Frame::Headers(mut frame) = frame {
+            assert_eq!(frame.stream_id, 1u8.into());
+            assert!(frame.padding_len.is_none());
             assert!(!frame.end_stream);
             assert!(frame.end_headers);
             assert!(frame.priority.is_none());
 
-            let mut decoder = HpackDecoder::new(4096);
-            let mut block = track_try_unwrap!(decoder.enter_header_block(&frame.fragment[..]));
-            let mut fields = Vec::new();
-            while let Some(field) = track_try_unwrap!(block.decode_field()) {
-                fields.push((
-                    String::from_utf8(field.name().to_owned()).unwrap(),
-                    String::from_utf8(field.value().to_owned()).unwrap(),
-                ));
-            }
-            assert_eq!(
-                fields,
-                [
-                    (":method".to_string(), "POST".to_string()),
-                    (":scheme".to_string(), "http".to_string()),
-                    (
-                        ":path".to_string(),
-                        "/helloworld.Greeter/SayHello".to_string(),
-                    ),
-                    (":authority".to_string(), "localhost:3000".to_string()),
-                    ("content-type".to_string(), "application/grpc".to_string()),
-                    ("user-agent".to_string(), "grpc-go/1.7.0-dev".to_string()),
-                    ("te".to_string(), "trailers".to_string()),
-                ]
-            );
+            let mut buf = Vec::new();
+            frame.read_to_end(&mut buf).unwrap();
+            assert_eq!(buf.len(), 76);
+
+            frame.into_io()
         } else {
             panic!("{:?}", frame);
-        }
+        };
 
-        // the header of the third frame
-        let frame = track_try_unwrap!(frame_rx.next().expect("second frame"));
-        if let Frame::Data(frame) = frame {
-            assert_eq!(frame.stream_id, StreamId::from(1u8));
+        // the third frame
+        let frame = track_try_unwrap!(Frame::read_from(&input[..]).wait());
+        let input = if let Frame::Data(mut frame) = frame {
+            assert_eq!(frame.stream_id, 1u8.into());
             assert!(frame.end_stream);
-            assert_eq!(frame.data, [0, 0, 0, 0, 6, 10, 4, 119, 100, 103, 107]);
+
+            let mut buf = Vec::new();
+            frame.read_to_end(&mut buf).unwrap();
+            assert_eq!(buf.len(), 11);
+
+            frame.into_io()
         } else {
             panic!("{:?}", frame);
-        }
+        };
 
-        // eos
-        assert!(frame_rx.next().expect("eos").is_err());
+        assert!(input.is_empty());
     }
 }

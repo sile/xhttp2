@@ -35,7 +35,7 @@ pub struct FrameHeader {
     /// Type:  The 8-bit type of the frame.  The frame type determines the
     /// format and semantics of the frame.  Implementations MUST ignore
     /// and discard any frame that has a type that is unknown.
-    pub payload_type: u8,
+    pub frame_type: u8,
 
     /// Flags:  An 8-bit field reserved for boolean flags specific to the
     /// frame type.
@@ -62,7 +62,7 @@ impl FrameHeader {
         let mut bytes = [0; 9];
 
         BigEndian::write_u24(&mut bytes[0..3], self.payload_length);
-        bytes[3] = self.payload_type;
+        bytes[3] = self.frame_type;
         bytes[4] = self.flags;
         BigEndian::write_u32(&mut bytes[5..9], self.stream_id.as_u32());
 
@@ -86,14 +86,14 @@ impl<R: Read> Future for ReadFrameHeader<R> {
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         if let Async::Ready((reader, bytes)) = track_async_io!(self.0.poll())? {
             let payload_length = BigEndian::read_u24(&bytes[0..3]);
-            let payload_type = bytes[3];
+            let frame_type = bytes[3];
             let flags = bytes[4];
             let stream_id =
                 StreamId::new_unchecked(BigEndian::read_u32(&bytes[5..9]) & 0x7FFF_FFFF);
 
             let header = FrameHeader {
                 payload_length,
-                payload_type,
+                frame_type,
                 flags,
                 stream_id,
             };

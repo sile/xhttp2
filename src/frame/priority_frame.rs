@@ -1,10 +1,8 @@
 use std::io::Read;
 use futures::{Future, Poll};
-use handy_async::io::AsyncRead;
-use handy_async::io::futures::ReadExact;
 
 use {Result, Error, ErrorKind};
-use priority::Priority;
+use priority::{Priority, ReadPriority};
 use stream::StreamId;
 use super::FrameHeader;
 
@@ -33,7 +31,7 @@ impl PriorityFrame {
         );
         Ok(ReadPriorityFrame {
             header,
-            future: reader.async_read_exact([0; 5]),
+            future: Priority::read_from(reader),
         })
     }
 }
@@ -41,7 +39,7 @@ impl PriorityFrame {
 #[derive(Debug)]
 pub struct ReadPriorityFrame<R> {
     header: FrameHeader,
-    future: ReadExact<R, [u8; 5]>,
+    future: ReadPriority<R>,
 }
 impl<R> ReadPriorityFrame<R> {
     pub fn reader(&self) -> &R {
@@ -56,10 +54,10 @@ impl<R: Read> Future for ReadPriorityFrame<R> {
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         Ok(track_async_io!(self.future.poll())?.map(
-            |(reader, bytes)| {
+            |(reader, priority)| {
                 let frame = PriorityFrame {
                     stream_id: self.header.stream_id,
-                    priority: Priority::from_bytes(bytes),
+                    priority,
                 };
                 (reader, frame)
             },
