@@ -20,6 +20,11 @@ pub struct Settings {
     pub max_frame_size: u32,
     pub max_header_list_size: u32,
 }
+impl Default for Settings {
+    fn default() -> Self {
+        unimplemented!()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Setting {
