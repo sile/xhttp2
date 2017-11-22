@@ -16,6 +16,13 @@ pub enum SettingsFrame {
     Ack,
 }
 impl SettingsFrame {
+    pub fn payload_len(&self) -> usize {
+        if let SettingsFrame::Syn(ref settings) = *self {
+            settings.len() * 6
+        } else {
+            0
+        }
+    }
     pub fn is_ack(&self) -> bool {
         if let SettingsFrame::Ack = *self {
             true

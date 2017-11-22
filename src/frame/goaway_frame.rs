@@ -28,6 +28,10 @@ pub struct GoawayFrame {
     pub debug_data: Vec<u8>,
 }
 impl GoawayFrame {
+    pub fn payload_len(&self) -> usize {
+        4 + 4 + self.debug_data.len()
+    }
+
     pub fn read_from<R: Read>(reader: R, header: FrameHeader) -> Result<ReadGoawayFrame<R>> {
         track_assert!(
             header.stream_id.is_connection_control_stream(),

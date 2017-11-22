@@ -25,9 +25,13 @@ pub struct ContinuationFrame<T> {
     pub stream_id: StreamId,
     pub end_headers: bool,
 
+    payload_len: usize,
     fragment_len: usize,
 }
 impl<T> ContinuationFrame<T> {
+    pub fn payload_len(&self) -> usize {
+        self.payload_len
+    }
     pub fn into_io(self) -> T {
         self.io
     }
@@ -43,6 +47,7 @@ impl<R: Read> ContinuationFrame<R> {
             stream_id: header.stream_id,
             end_headers: (header.flags & FLAG_END_HEADERS) != 0,
             fragment_len: header.payload_length as usize,
+            payload_len: header.payload_length as usize,
         };
         Ok(ReadContinuationFrame(Finished::new(frame)))
     }

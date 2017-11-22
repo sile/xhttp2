@@ -34,10 +34,14 @@ pub struct DataFrame<T> {
     pub end_stream: bool,
     pub padding_len: Option<u8>,
 
+    payload_len: usize,
     fragment_len: usize,
     rest_padding_len: Option<u8>,
 }
 impl<T> DataFrame<T> {
+    pub fn payload_len(&self) -> usize {
+        self.payload_len
+    }
     pub fn into_io(self) -> T {
         self.io
     }
@@ -135,6 +139,7 @@ impl<R: Read> Future for ReadDataFrame<R> {
                         padding_len: self.padding_len,
                         rest_padding_len: self.padding_len,
                         fragment_len,
+                        payload_len: self.header.payload_length as usize,
                     };
                     return Ok(Async::Ready(frame));
                 }

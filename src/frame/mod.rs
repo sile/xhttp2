@@ -62,6 +62,22 @@ pub enum Frame<T> {
     Settings { io: T, frame: SettingsFrame },
     WindowUpdate { io: T, frame: WindowUpdateFrame },
 }
+impl<T> Frame<T> {
+    pub fn payload_len(&self) -> usize {
+        match *self {
+            Frame::Continuation(ref frame) => frame.payload_len(),
+            Frame::Data(ref frame) => frame.payload_len(),
+            Frame::Goaway { ref frame, .. } => frame.payload_len(),
+            Frame::Headers(ref frame) => frame.payload_len(),
+            Frame::Ping { .. } => 8,
+            Frame::Priority { .. } => 5,
+            Frame::RstStream { .. } => 4,
+            Frame::PushPromise(ref frame) => frame.payload_len(),
+            Frame::Settings { ref frame, .. } => frame.payload_len(),
+            Frame::WindowUpdate { .. } => 4,
+        }
+    }
+}
 impl<R: Read> Frame<R> {
     pub fn read_from(reader: R) -> ReadFrame<R> {
         ReadFrame { phase: Phase::A(FrameHeader::read_from(reader)) }
