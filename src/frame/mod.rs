@@ -50,31 +50,31 @@ const FRAME_TYPE_WINDOW_UPDATE: u8 = 0x8;
 const FRAME_TYPE_CONTINUATION: u8 = 0x9;
 
 #[derive(Debug)]
-pub enum Frame<T> {
-    Continuation(ContinuationFrame<T>),
-    Data(DataFrame<T>),
-    Goaway { io: T, frame: GoawayFrame },
-    Headers(HeadersFrame<T>),
-    Ping { io: T, frame: PingFrame },
-    Priority { io: T, frame: PriorityFrame },
-    RstStream { io: T, frame: RstStreamFrame },
-    PushPromise(PushPromiseFrame<T>),
-    Settings { io: T, frame: SettingsFrame },
-    WindowUpdate { io: T, frame: WindowUpdateFrame },
+pub enum Frame<B> {
+    Continuation(ContinuationFrame<B>),
+    Data(DataFrame<B>),
+    Goaway(GoawayFrame),
+    Headers(HeadersFrame<B>),
+    Ping(PingFrame),
+    Priority(PriorityFrame),
+    RstStream(RstStreamFrame),
+    PushPromise(PushPromiseFrame<B>),
+    Settings(SettingsFrame),
+    WindowUpdate(WindowUpdateFrame),
 }
-impl<T> Frame<T> {
+impl<B: AsRef<[u8]>> Frame<B> {
     pub fn payload_len(&self) -> usize {
         match *self {
             Frame::Continuation(ref frame) => frame.payload_len(),
             Frame::Data(ref frame) => frame.payload_len(),
-            Frame::Goaway { ref frame, .. } => frame.payload_len(),
+            Frame::Goaway(ref frame) => frame.payload_len(),
             Frame::Headers(ref frame) => frame.payload_len(),
-            Frame::Ping { .. } => 8,
-            Frame::Priority { .. } => 5,
-            Frame::RstStream { .. } => 4,
+            Frame::Ping(_) => 8,
+            Frame::Priority(_) => 5,
+            Frame::RstStream(_) => 4,
             Frame::PushPromise(ref frame) => frame.payload_len(),
-            Frame::Settings { ref frame, .. } => frame.payload_len(),
-            Frame::WindowUpdate { .. } => 4,
+            Frame::Settings(ref frame) => frame.payload_len(),
+            Frame::WindowUpdate(_) => 4,
         }
     }
 }
@@ -105,7 +105,7 @@ impl<R: Read> ReadFrame<R> {
     }
 }
 impl<R: Read> Future for ReadFrame<R> {
-    type Item = Frame<R>;
+    type Item = (R, Frame<Vec<u8>>);
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         while let Async::Ready(phase) = track!(self.phase.poll().map_err(Error::from))? {
@@ -162,7 +162,7 @@ impl<R: Read> Future for ReadFrame<R> {
                         }
                     }
                 }
-                Phase::B(frame) => return Ok(Async::Ready(frame)),
+                Phase::B((reader, frame)) => return Ok(Async::Ready((reader, frame))),
                 _ => unreachable!(),
             };
             self.phase = next;
@@ -215,46 +215,54 @@ impl<R> ReadFramePayload<R> {
     }
 }
 impl<R: Read> Future for ReadFramePayload<R> {
-    type Item = Frame<R>;
+    type Item = (R, Frame<Vec<u8>>);
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         match *self {
             ReadFramePayload::Continuation(ref mut f) => Ok(
-                track!(f.poll())?.map(Frame::Continuation),
+                track!(f.poll())?.map(|(reader, frame)| {
+                    (reader, Frame::Continuation(frame))
+                }),
             ),
-            ReadFramePayload::Data(ref mut f) => Ok(track!(f.poll())?.map(Frame::Data)),
+            ReadFramePayload::Data(ref mut f) => Ok(track!(f.poll())?.map(|(reader, frame)| {
+                (reader, Frame::Data(frame))
+            })),
             ReadFramePayload::Goaway(ref mut f) => {
-                Ok(track!(f.poll())?.map(
-                    |(io, frame)| Frame::Goaway { io, frame },
-                ))
+                Ok(track!(f.poll())?.map(|(reader, frame)| {
+                    (reader, Frame::Goaway(frame))
+                }))
             }
-            ReadFramePayload::Headers(ref mut f) => Ok(track!(f.poll())?.map(Frame::Headers)),
+            ReadFramePayload::Headers(ref mut f) => Ok(track!(f.poll())?.map(|(reader, frame)| {
+                (reader, Frame::Headers(frame))
+            })),
             ReadFramePayload::Ping(ref mut f) => {
-                Ok(track!(f.poll())?.map(
-                    |(io, frame)| Frame::Ping { io, frame },
-                ))
+                Ok(track!(f.poll())?.map(|(reader, frame)| {
+                    (reader, Frame::Ping(frame))
+                }))
             }
             ReadFramePayload::Priority(ref mut f) => {
-                Ok(track!(f.poll())?.map(
-                    |(io, frame)| Frame::Priority { io, frame },
-                ))
+                Ok(track!(f.poll())?.map(|(reader, frame)| {
+                    (reader, Frame::Priority(frame))
+                }))
             }
             ReadFramePayload::PushPromise(ref mut f) => Ok(
-                track!(f.poll())?.map(Frame::PushPromise),
+                track!(f.poll())?.map(|(reader, frame)| {
+                    (reader, Frame::PushPromise(frame))
+                }),
             ),
             ReadFramePayload::RstStream(ref mut f) => {
-                Ok(track!(f.poll())?.map(|(io, frame)| {
-                    Frame::RstStream { io, frame }
+                Ok(track!(f.poll())?.map(|(reader, frame)| {
+                    (reader, Frame::RstStream(frame))
                 }))
             }
             ReadFramePayload::Settings(ref mut f) => {
-                Ok(track!(f.poll())?.map(
-                    |(io, frame)| Frame::Settings { io, frame },
-                ))
+                Ok(track!(f.poll())?.map(|(reader, frame)| {
+                    (reader, Frame::Settings(frame))
+                }))
             }
             ReadFramePayload::WindowUpdate(ref mut f) => {
-                Ok(track!(f.poll())?.map(|(io, frame)| {
-                    Frame::WindowUpdate { io, frame }
+                Ok(track!(f.poll())?.map(|(reader, frame)| {
+                    (reader, Frame::WindowUpdate(frame))
                 }))
             }
         }

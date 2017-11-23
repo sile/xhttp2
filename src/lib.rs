@@ -27,13 +27,11 @@ pub mod setting;
 pub mod stream;
 
 mod error;
-mod aux_futures;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(test)]
 mod test {
-    use std::io::Read;
     use futures::Future;
 
     use super::*;
@@ -62,44 +60,33 @@ mod test {
         assert_eq!(input.len(), data.len() - preface::PREFACE_BYTES.len());
 
         // the first frame
-        let frame = track_try_unwrap!(Frame::read_from(&input[..]).wait());
-        let input = if let Frame::Settings { io: input, frame } = frame {
+        let (input, frame) = track_try_unwrap!(Frame::read_from(&input[..]).wait());
+        if let Frame::Settings(frame) = frame {
             assert!(!frame.is_ack());
             assert!(frame.settings().is_empty());
-            input
         } else {
             panic!("{:?}", frame);
         };
 
         // the second frame
-        let frame = track_try_unwrap!(Frame::read_from(&input[..]).wait());
-        let input = if let Frame::Headers(mut frame) = frame {
+        let (input, frame) = track_try_unwrap!(Frame::read_from(&input[..]).wait());
+        if let Frame::Headers(frame) = frame {
             assert_eq!(frame.stream_id, 1u8.into());
             assert!(frame.padding_len.is_none());
             assert!(!frame.end_stream);
             assert!(frame.end_headers);
             assert!(frame.priority.is_none());
-
-            let mut buf = Vec::new();
-            frame.read_to_end(&mut buf).unwrap();
-            assert_eq!(buf.len(), 76);
-
-            frame.into_io()
+            assert_eq!(frame.fragment.len(), 76);
         } else {
             panic!("{:?}", frame);
         };
 
         // the third frame
-        let frame = track_try_unwrap!(Frame::read_from(&input[..]).wait());
-        let input = if let Frame::Data(mut frame) = frame {
+        let (input, frame) = track_try_unwrap!(Frame::read_from(&input[..]).wait());
+        if let Frame::Data(frame) = frame {
             assert_eq!(frame.stream_id, 1u8.into());
             assert!(frame.end_stream);
-
-            let mut buf = Vec::new();
-            frame.read_to_end(&mut buf).unwrap();
-            assert_eq!(buf.len(), 11);
-
-            frame.into_io()
+            assert_eq!(frame.data.len(), 11);
         } else {
             panic!("{:?}", frame);
         };

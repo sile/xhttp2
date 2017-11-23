@@ -1,4 +1,4 @@
-use std::io::{self, Read};
+use std::io::Read;
 use futures::{Future, Poll, Async};
 use handy_async::future::Phase;
 use handy_async::io::AsyncRead;
@@ -27,25 +27,17 @@ const FLAG_PADDED: u8 = 0x8;
 ///                  Figure 11: PUSH_PROMISE Payload Format
 /// ```
 #[derive(Debug)]
-pub struct PushPromiseFrame<T> {
-    io: T,
-
+pub struct PushPromiseFrame<B> {
     // TODO: private
     pub stream_id: StreamId,
     pub promise_stream_id: StreamId,
     pub end_headers: bool,
     pub padding_len: Option<u8>,
-
-    payload_len: usize,
-    fragment_len: usize,
-    rest_padding_len: Option<u8>,
+    pub fragment: B,
 }
-impl<T> PushPromiseFrame<T> {
+impl<B: AsRef<[u8]>> PushPromiseFrame<B> {
     pub fn payload_len(&self) -> usize {
-        self.payload_len
-    }
-    pub fn into_io(self) -> T {
-        self.io
+        4 + self.fragment.as_ref().len() + self.padding_len.map_or(0, |x| x as usize + 1)
     }
 }
 impl<R: Read> PushPromiseFrame<R> {
@@ -62,32 +54,10 @@ impl<R: Read> PushPromiseFrame<R> {
         Ok(ReadPushPromiseFrame {
             header,
             read_bytes: 0,
+            promise_stream_id: StreamId::from(0u8),
             padding_len: None,
             phase,
         })
-    }
-}
-impl<R: Read> Read for PushPromiseFrame<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        use std::cmp;
-        if self.fragment_len == 0 {
-            while let Some(ref mut padding_len) = self.rest_padding_len {
-                if *padding_len == 0 {
-                    break;
-                }
-                let mut buf = [0; 0xFF];
-                let len = cmp::min(0xFF, *padding_len);
-                let read_size = self.io.read(&mut buf[0..len as usize])?;
-                *padding_len -= read_size as u8;
-            }
-            Ok(0)
-        } else {
-            let len = cmp::min(self.fragment_len, buf.len());
-            let read_size = self.io.read(&mut buf[0..len])?;
-
-            self.fragment_len -= read_size;
-            Ok(read_size)
-        }
     }
 }
 
@@ -95,8 +65,9 @@ impl<R: Read> Read for PushPromiseFrame<R> {
 pub struct ReadPushPromiseFrame<R> {
     header: FrameHeader,
     read_bytes: usize,
+    promise_stream_id: StreamId,
     padding_len: Option<u8>,
-    phase: Phase<ReadExact<R, [u8; 1]>, ReadStreamId<R>>,
+    phase: Phase<ReadExact<R, [u8; 1]>, ReadStreamId<R>, ReadExact<R, Vec<u8>>>,
 }
 impl<R> ReadPushPromiseFrame<R> {
     pub fn reader(&self) -> &R {
@@ -115,36 +86,37 @@ impl<R> ReadPushPromiseFrame<R> {
     }
 }
 impl<R: Read> Future for ReadPushPromiseFrame<R> {
-    type Item = PushPromiseFrame<R>;
+    type Item = (R, PushPromiseFrame<Vec<u8>>);
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         while let Async::Ready(phase) = track_async_io!(self.phase.poll())? {
             let next = match phase {
                 Phase::A((reader, bytes)) => {
-                    self.read_bytes += bytes.len();
+                    self.read_bytes += 1;
                     self.padding_len = Some(bytes[0]);
                     Phase::B(StreamId::read_from(reader))
                 }
                 Phase::B((reader, promise_stream_id)) => {
-                    let mut fragment_len = self.header.payload_length as usize - self.read_bytes;
+                    self.read_bytes += 4;
+                    self.promise_stream_id = promise_stream_id;
+
+                    let buf = vec![0; self.header.payload_length as usize - self.read_bytes];
+                    Phase::C(reader.async_read_exact(buf))
+                }
+                Phase::C((reader, mut buf)) => {
                     if let Some(padding_len) = self.padding_len {
-                        track_assert!(
-                            padding_len as usize <= fragment_len,
-                            ErrorKind::ProtocolError
-                        );
-                        fragment_len -= padding_len as usize;
+                        track_assert!(buf.len() >= padding_len as usize, ErrorKind::ProtocolError);
+                        let fragment_len = buf.len() - padding_len as usize;
+                        buf.truncate(fragment_len);
                     }
                     let frame = PushPromiseFrame {
-                        io: reader,
                         stream_id: self.header.stream_id,
-                        promise_stream_id,
+                        promise_stream_id: self.promise_stream_id,
                         end_headers: (self.header.flags & FLAG_END_HEADERS) != 0,
                         padding_len: self.padding_len,
-                        rest_padding_len: self.padding_len,
-                        fragment_len,
-                        payload_len: self.header.payload_length as usize,
+                        fragment: buf,
                     };
-                    return Ok(Async::Ready(frame));
+                    return Ok(Async::Ready((reader, frame)));
                 }
                 _ => unreachable!(),
             };

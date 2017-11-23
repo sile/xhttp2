@@ -1,8 +1,9 @@
-use std::io::{self, Read};
+use std::io::Read;
 use futures::{Future, Poll};
+use handy_async::io::AsyncRead;
+use handy_async::io::futures::ReadExact;
 
 use {Result, ErrorKind, Error};
-use aux_futures::Finished;
 use stream::StreamId;
 use super::FrameHeader;
 
@@ -18,65 +19,57 @@ const FLAG_END_HEADERS: u8 = 0x4;
 ///                   Figure 15: CONTINUATION Frame Payload
 /// ```
 #[derive(Debug)]
-pub struct ContinuationFrame<T> {
-    io: T,
-
+pub struct ContinuationFrame<B> {
     // TODO: private
     pub stream_id: StreamId,
     pub end_headers: bool,
-
-    payload_len: usize,
-    fragment_len: usize,
+    pub payload: B,
 }
-impl<T> ContinuationFrame<T> {
+impl<B: AsRef<[u8]>> ContinuationFrame<B> {
     pub fn payload_len(&self) -> usize {
-        self.payload_len
-    }
-    pub fn into_io(self) -> T {
-        self.io
+        self.payload.as_ref().len()
     }
 }
-impl<R: Read> ContinuationFrame<R> {
-    pub fn read_from(reader: R, header: FrameHeader) -> Result<ReadContinuationFrame<R>> {
+impl ContinuationFrame<Vec<u8>> {
+    pub fn read_from<R: Read>(reader: R, header: FrameHeader) -> Result<ReadContinuationFrame<R>> {
         track_assert!(
             !header.stream_id.is_connection_control_stream(),
             ErrorKind::ProtocolError
         );
-        let frame = ContinuationFrame {
-            io: reader,
-            stream_id: header.stream_id,
-            end_headers: (header.flags & FLAG_END_HEADERS) != 0,
-            fragment_len: header.payload_length as usize,
-            payload_len: header.payload_length as usize,
-        };
-        Ok(ReadContinuationFrame(Finished::new(frame)))
-    }
-}
-impl<R: Read> Read for ContinuationFrame<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        use std::cmp;
-        let len = cmp::min(self.fragment_len, buf.len());
-        let read_size = self.io.read(&mut buf[0..len])?;
-
-        self.fragment_len -= read_size;
-        Ok(read_size)
+        let payload = vec![0; header.payload_length as usize];
+        Ok(ReadContinuationFrame {
+            header,
+            future: reader.async_read_exact(payload),
+        })
     }
 }
 
 #[derive(Debug)]
-pub struct ReadContinuationFrame<R>(Finished<ContinuationFrame<R>>);
+pub struct ReadContinuationFrame<R> {
+    header: FrameHeader,
+    future: ReadExact<R, Vec<u8>>,
+}
 impl<R> ReadContinuationFrame<R> {
     pub fn reader(&self) -> &R {
-        &self.0.item().io
+        self.future.reader()
     }
     pub fn reader_mut(&mut self) -> &mut R {
-        &mut self.0.item_mut().io
+        self.future.reader_mut()
     }
 }
-impl<R> Future for ReadContinuationFrame<R> {
-    type Item = ContinuationFrame<R>;
+impl<R: Read> Future for ReadContinuationFrame<R> {
+    type Item = (R, ContinuationFrame<Vec<u8>>);
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.0.poll()
+        Ok(track_async_io!(self.future.poll())?.map(
+            |(reader, payload)| {
+                let frame = ContinuationFrame {
+                    stream_id: self.header.stream_id,
+                    end_headers: (self.header.flags & FLAG_END_HEADERS) != 0,
+                    payload,
+                };
+                (reader, frame)
+            },
+        ))
     }
 }

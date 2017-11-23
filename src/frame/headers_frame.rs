@@ -1,11 +1,10 @@
-use std::io::{self, Read};
+use std::io::Read;
 use futures::{Future, Poll, Async};
 use handy_async::future::Phase;
 use handy_async::io::AsyncRead;
 use handy_async::io::futures::ReadExact;
 
 use {Result, Error, ErrorKind};
-use aux_futures::Finished;
 use priority::{Priority, ReadPriority};
 use stream::StreamId;
 use super::FrameHeader;
@@ -33,26 +32,19 @@ const FLAG_PRIORITY: u8 = 0x20;
 ///                      Figure 7: HEADERS Frame Payload
 /// ```
 #[derive(Debug)]
-pub struct HeadersFrame<T> {
-    io: T,
-
+pub struct HeadersFrame<B> {
     // TODO: private
     pub stream_id: StreamId,
     pub end_stream: bool,
     pub end_headers: bool,
     pub priority: Option<Priority>,
     pub padding_len: Option<u8>,
-
-    payload_len: usize,
-    fragment_len: usize,
-    rest_padding_len: Option<u8>,
+    pub fragment: B,
 }
-impl<T> HeadersFrame<T> {
+impl<B: AsRef<[u8]>> HeadersFrame<B> {
     pub fn payload_len(&self) -> usize {
-        self.payload_len
-    }
-    pub fn into_io(self) -> T {
-        self.io
+        self.fragment.as_ref().len() + self.padding_len.map_or(0, |x| x as usize + 1) +
+            self.priority.as_ref().map_or(0, |_| 5)
     }
 }
 impl<R: Read> HeadersFrame<R> {
@@ -66,7 +58,8 @@ impl<R: Read> HeadersFrame<R> {
         } else if (header.flags & FLAG_PRIORITY) != 0 {
             Phase::B(Priority::read_from(reader))
         } else {
-            Phase::C(Finished::new(reader))
+            let fragment = vec![0; header.payload_length as usize];
+            Phase::C(reader.async_read_exact(fragment))
         };
         Ok(ReadHeadersFrame {
             header,
@@ -77,29 +70,6 @@ impl<R: Read> HeadersFrame<R> {
         })
     }
 }
-impl<R: Read> Read for HeadersFrame<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        use std::cmp;
-        if self.fragment_len == 0 {
-            while let Some(ref mut padding_len) = self.rest_padding_len {
-                if *padding_len == 0 {
-                    break;
-                }
-                let mut buf = [0; 0xFF];
-                let len = cmp::min(0xFF, *padding_len);
-                let read_size = self.io.read(&mut buf[0..len as usize])?;
-                *padding_len -= read_size as u8;
-            }
-            Ok(0)
-        } else {
-            let len = cmp::min(self.fragment_len, buf.len());
-            let read_size = self.io.read(&mut buf[0..len])?;
-
-            self.fragment_len -= read_size;
-            Ok(read_size)
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct ReadHeadersFrame<R> {
@@ -107,14 +77,14 @@ pub struct ReadHeadersFrame<R> {
     read_bytes: usize,
     padding_len: Option<u8>,
     priority: Option<Priority>,
-    phase: Phase<ReadExact<R, [u8; 1]>, ReadPriority<R>, Finished<R>>,
+    phase: Phase<ReadExact<R, [u8; 1]>, ReadPriority<R>, ReadExact<R, Vec<u8>>>,
 }
 impl<R> ReadHeadersFrame<R> {
     pub fn reader(&self) -> &R {
         match self.phase {
             Phase::A(ref f) => f.reader(),
             Phase::B(ref f) => f.reader(),
-            Phase::C(ref f) => f.item(),
+            Phase::C(ref f) => f.reader(),
             _ => unreachable!(),
         }
     }
@@ -122,13 +92,13 @@ impl<R> ReadHeadersFrame<R> {
         match self.phase {
             Phase::A(ref mut f) => f.reader_mut(),
             Phase::B(ref mut f) => f.reader_mut(),
-            Phase::C(ref mut f) => f.item_mut(),
+            Phase::C(ref mut f) => f.reader_mut(),
             _ => unreachable!(),
         }
     }
 }
 impl<R: Read> Future for ReadHeadersFrame<R> {
-    type Item = HeadersFrame<R>;
+    type Item = (R, HeadersFrame<Vec<u8>>);
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         while let Async::Ready(phase) = track_async_io!(self.phase.poll())? {
@@ -139,35 +109,32 @@ impl<R: Read> Future for ReadHeadersFrame<R> {
                     if (self.header.flags & FLAG_PRIORITY) != 0 {
                         Phase::B(Priority::read_from(reader))
                     } else {
-                        Phase::C(Finished::new(reader))
+                        let buf = vec![0; self.header.payload_length as usize - self.read_bytes];
+                        Phase::C(reader.async_read_exact(buf))
                     }
                 }
                 Phase::B((reader, priority)) => {
                     self.read_bytes += 5;
                     self.priority = Some(priority);
-                    Phase::C(Finished::new(reader))
+
+                    let buf = vec![0; self.header.payload_length as usize - self.read_bytes];
+                    Phase::C(reader.async_read_exact(buf))
                 }
-                Phase::C(reader) => {
-                    let mut fragment_len = self.header.payload_length as usize - self.read_bytes;
+                Phase::C((reader, mut buf)) => {
                     if let Some(padding_len) = self.padding_len {
-                        track_assert!(
-                            padding_len as usize <= fragment_len,
-                            ErrorKind::ProtocolError
-                        );
-                        fragment_len -= padding_len as usize;
+                        track_assert!(buf.len() >= padding_len as usize, ErrorKind::ProtocolError);
+                        let fragment_len = buf.len() - padding_len as usize;
+                        buf.truncate(fragment_len);
                     }
                     let frame = HeadersFrame {
-                        io: reader,
                         stream_id: self.header.stream_id,
                         end_stream: (self.header.flags & FLAG_END_STREAM) != 0,
                         end_headers: (self.header.flags & FLAG_END_HEADERS) != 0,
                         priority: self.priority.clone(),
                         padding_len: self.padding_len,
-                        rest_padding_len: self.padding_len,
-                        fragment_len,
-                        payload_len: self.header.payload_length as usize,
+                        fragment: buf,
                     };
-                    return Ok(Async::Ready(frame));
+                    return Ok(Async::Ready((reader, frame)));
                 }
                 _ => unreachable!(),
             };
