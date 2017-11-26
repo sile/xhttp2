@@ -1,7 +1,7 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use futures::{Future, Poll};
-use handy_async::io::AsyncRead;
-use handy_async::io::futures::ReadExact;
+use handy_async::io::{AsyncRead, AsyncWrite};
+use handy_async::io::futures::{ReadExact, WriteAll};
 
 use {Result, ErrorKind, Error};
 use stream::StreamId;
@@ -29,6 +29,23 @@ impl<B: AsRef<[u8]>> ContinuationFrame<B> {
     pub fn payload_len(&self) -> usize {
         self.payload.as_ref().len()
     }
+    pub fn frame_header(&self) -> FrameHeader {
+        let flags = if self.end_headers {
+            FLAG_END_HEADERS
+        } else {
+            0
+        };
+
+        FrameHeader {
+            payload_length: self.payload_len() as u32,
+            frame_type: super::FRAME_TYPE_CONTINUATION,
+            flags,
+            stream_id: self.stream_id,
+        }
+    }
+    pub fn write_into<W: Write>(self, writer: W) -> WriteContinuationFrame<W, B> {
+        WriteContinuationFrame(writer.async_write_all(self.payload))
+    }
 }
 impl ContinuationFrame<Vec<u8>> {
     pub fn read_from<R: Read>(reader: R, header: FrameHeader) -> Result<ReadContinuationFrame<R>> {
@@ -41,6 +58,16 @@ impl ContinuationFrame<Vec<u8>> {
             header,
             future: reader.async_read_exact(payload),
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct WriteContinuationFrame<W, B>(WriteAll<W, B>);
+impl<W: Write, B: AsRef<[u8]>> Future for WriteContinuationFrame<W, B> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        Ok(track_async_io!(self.0.poll())?.map(|(writer, _)| writer))
     }
 }
 

@@ -1,8 +1,11 @@
-use std::io::Read;
+use std::fmt;
+use std::io::{Read, Write};
 use byteorder::{BigEndian, ByteOrder};
 use futures::{Future, Poll, Async};
-use handy_async::io::AsyncRead;
-use handy_async::io::futures::ReadExact;
+use handy_async::io::{AsyncRead, WriteInto};
+use handy_async::io::futures::{ReadExact, WritePattern};
+use handy_async::pattern::Endian;
+use handy_async::pattern::combinators::BE;
 
 use {Result, Error, ErrorKind};
 use stream::StreamId;
@@ -31,7 +34,22 @@ impl GoawayFrame {
     pub fn payload_len(&self) -> usize {
         4 + 4 + self.debug_data.len()
     }
-
+    pub fn frame_header(&self) -> FrameHeader {
+        FrameHeader {
+            payload_length: self.payload_len() as u32,
+            frame_type: super::FRAME_TYPE_GOAWAY,
+            flags: 0,
+            stream_id: StreamId::connection_control_stream_id(),
+        }
+    }
+    pub fn write_into<W: Write>(self, writer: W) -> WriteGoawayFrame<W> {
+        let pattern = (
+            self.last_stream_id.as_u32().be(),
+            self.error.as_code().be(),
+            self.debug_data,
+        );
+        WriteGoawayFrame(pattern.write_into(writer))
+    }
     pub fn read_from<R: Read>(reader: R, header: FrameHeader) -> Result<ReadGoawayFrame<R>> {
         track_assert!(
             header.stream_id.is_connection_control_stream(),
@@ -44,6 +62,21 @@ impl GoawayFrame {
         })
     }
 }
+
+pub struct WriteGoawayFrame<W: Write>(WritePattern<(BE<u32>, BE<u32>, Vec<u8>), W>);
+impl<W: Write> Future for WriteGoawayFrame<W> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        Ok(track_async_io!(self.0.poll())?.map(|(writer, _)| writer))
+    }
+}
+impl<W: Write> fmt::Debug for WriteGoawayFrame<W> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "WriteGoawayFrame(_)")
+    }
+}
+
 
 #[derive(Debug)]
 pub struct ReadGoawayFrame<R> {

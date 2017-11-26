@@ -1,8 +1,8 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use byteorder::{ByteOrder, BigEndian};
 use futures::{Future, Poll};
-use handy_async::io::AsyncRead;
-use handy_async::io::futures::ReadExact;
+use handy_async::io::{AsyncRead, AsyncWrite};
+use handy_async::io::futures::{ReadExact, WriteAll};
 
 use {Result, Error, ErrorKind};
 use stream::StreamId;
@@ -23,6 +23,17 @@ pub struct RstStreamFrame {
     pub error: Error,
 }
 impl RstStreamFrame {
+    pub fn payload_len(&self) -> usize {
+        4
+    }
+    pub fn frame_header(&self) -> FrameHeader {
+        FrameHeader {
+            payload_length: self.payload_len() as u32,
+            frame_type: super::FRAME_TYPE_RST_STREAM,
+            flags: 0,
+            stream_id: self.stream_id,
+        }
+    }
     pub fn read_from<R: Read>(reader: R, header: FrameHeader) -> Result<ReadRstStreamFrame<R>> {
         track_assert_eq!(header.payload_length, 4, ErrorKind::FrameSizeError);
         track_assert!(
@@ -33,6 +44,21 @@ impl RstStreamFrame {
             header,
             future: reader.async_read_exact([0; 4]),
         })
+    }
+    pub fn write_into<W: Write>(self, writer: W) -> WriteRstStreamFrame<W> {
+        let mut buf = [0; 4];
+        BigEndian::write_u32(&mut buf[..], self.error.as_code());
+        WriteRstStreamFrame(writer.async_write_all(buf))
+    }
+}
+
+#[derive(Debug)]
+pub struct WriteRstStreamFrame<W>(WriteAll<W, [u8; 4]>);
+impl<W: Write> Future for WriteRstStreamFrame<W> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        Ok(track_async_io!(self.0.poll())?.map(|(writer, _)| writer))
     }
 }
 

@@ -1,8 +1,11 @@
-use std::io::Read;
+use std::fmt;
+use std::io::{Read, Write};
 use futures::{Future, Poll, Async};
 use handy_async::future::Phase;
-use handy_async::io::AsyncRead;
-use handy_async::io::futures::ReadExact;
+use handy_async::io::{AsyncRead, WriteInto};
+use handy_async::io::futures::{ReadExact, WritePattern};
+use handy_async::pattern::{Endian, Buf};
+use handy_async::pattern::combinators::BE;
 
 use {Result, Error, ErrorKind};
 use stream::{StreamId, ReadStreamId};
@@ -39,9 +42,35 @@ impl<B: AsRef<[u8]>> PushPromiseFrame<B> {
     pub fn payload_len(&self) -> usize {
         4 + self.fragment.as_ref().len() + self.padding_len.map_or(0, |x| x as usize + 1)
     }
+    pub fn frame_header(&self) -> FrameHeader {
+        let mut flags = 0;
+        if self.end_headers {
+            flags |= FLAG_END_HEADERS;
+        }
+        if self.padding_len.is_some() {
+            flags |= FLAG_PADDED;
+        }
+
+        FrameHeader {
+            payload_length: self.payload_len() as u32,
+            frame_type: super::FRAME_TYPE_PUSH_PROMISE,
+            flags,
+            stream_id: self.stream_id,
+        }
+    }
+    pub fn write_into<W: Write>(self, writer: W) -> WritePushPromiseFrame<W, B> {
+        let padding: &'static [u8] = &[0; 255][0..self.padding_len.map_or(0, |x| x as usize)];
+        let pattern = (
+            self.padding_len,
+            self.promise_stream_id.as_u32().be(),
+            Buf(self.fragment),
+            Buf(padding),
+        );
+        WritePushPromiseFrame { future: pattern.write_into(writer) }
+    }
 }
-impl<R: Read> PushPromiseFrame<R> {
-    pub fn read_from(reader: R, header: FrameHeader) -> Result<ReadPushPromiseFrame<R>> {
+impl PushPromiseFrame<Vec<u8>> {
+    pub fn read_from<R: Read>(reader: R, header: FrameHeader) -> Result<ReadPushPromiseFrame<R>> {
         track_assert!(
             !header.stream_id.is_connection_control_stream(),
             ErrorKind::ProtocolError
@@ -58,6 +87,24 @@ impl<R: Read> PushPromiseFrame<R> {
             padding_len: None,
             phase,
         })
+    }
+}
+
+pub struct WritePushPromiseFrame<W: Write, B: AsRef<[u8]>> {
+    future: WritePattern<(Option<u8>, BE<u32>, Buf<B>, Buf<&'static [u8]>), W>,
+}
+impl<W: Write, B: AsRef<[u8]>> Future for WritePushPromiseFrame<W, B> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        Ok(track_async_io!(self.future.poll())?.map(
+            |(writer, _)| writer,
+        ))
+    }
+}
+impl<W: Write, B: AsRef<[u8]>> fmt::Debug for WritePushPromiseFrame<W, B> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "WritePushPromiseFrame(_)")
     }
 }
 

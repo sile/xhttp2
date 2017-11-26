@@ -1,8 +1,8 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use byteorder::{BigEndian, ByteOrder};
 use futures::{Future, Poll, Async};
-use handy_async::io::AsyncRead;
-use handy_async::io::futures::ReadExact;
+use handy_async::io::{AsyncRead, AsyncWrite};
+use handy_async::io::futures::{ReadExact, WriteAll};
 
 use {Result, Error, ErrorKind};
 use stream::StreamId;
@@ -23,12 +23,38 @@ pub struct WindowUpdateFrame {
     pub window_size_increment: u32, // TODO: private
 }
 impl WindowUpdateFrame {
+    pub fn payload_len(&self) -> usize {
+        4
+    }
+    pub fn frame_header(&self) -> FrameHeader {
+        FrameHeader {
+            payload_length: self.payload_len() as u32,
+            frame_type: super::FRAME_TYPE_WINDOW_UPDATE,
+            flags: 0,
+            stream_id: self.stream_id,
+        }
+    }
+    pub fn write_into<W: Write>(self, writer: W) -> WriteWindowUpdateFrame<W> {
+        let mut buf = [0; 4];
+        BigEndian::write_u32(&mut buf[..], self.window_size_increment);
+        WriteWindowUpdateFrame(writer.async_write_all(buf))
+    }
     pub fn read_from<R: Read>(reader: R, header: FrameHeader) -> Result<ReadWindowUpdateFrame<R>> {
         track_assert_eq!(header.payload_length, 4, ErrorKind::FrameSizeError);
         Ok(ReadWindowUpdateFrame {
             header,
             future: reader.async_read_exact([0; 4]),
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct WriteWindowUpdateFrame<W>(WriteAll<W, [u8; 4]>);
+impl<W: Write> Future for WriteWindowUpdateFrame<W> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        Ok(track_async_io!(self.0.poll())?.map(|(writer, _)| writer))
     }
 }
 

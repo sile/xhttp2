@@ -75,6 +75,24 @@ impl Error {
             _ => ErrorKind::InternalError.cause(format!("Unknown error code: {}", code)),
         }.into()
     }
+    pub fn as_code(&self) -> u32 {
+        match *self.kind() {
+            ErrorKind::NoError => 0x0,
+            ErrorKind::ProtocolError => 0x1,
+            ErrorKind::InternalError => 0x2,
+            ErrorKind::FlowControlError => 0x3,
+            ErrorKind::SettingsTimeout => 0x4,
+            ErrorKind::StreamClosed => 0x5,
+            ErrorKind::FrameSizeError => 0x6,
+            ErrorKind::RefusedStream => 0x7,
+            ErrorKind::Cancel => 0x8,
+            ErrorKind::CompressionError => 0x9,
+            ErrorKind::ConnectError => 0xa,
+            ErrorKind::EnhanceYourCalm => 0xb,
+            ErrorKind::InadequateSecurity => 0xc,
+            ErrorKind::Http11Required => 0xd,
+        }
+    }
 }
 impl From<std::io::Error> for Error {
     fn from(f: std::io::Error) -> Self {

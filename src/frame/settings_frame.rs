@@ -1,10 +1,11 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use futures::{Future, Poll, Async};
-use handy_async::io::AsyncRead;
-use handy_async::io::futures::ReadExact;
+use handy_async::io::{AsyncRead, AsyncWrite};
+use handy_async::io::futures::{ReadExact, WriteAll};
 
 use {Result, Error, ErrorKind};
 use setting::Setting;
+use stream::StreamId;
 use super::FrameHeader;
 
 const FLAG_ACK: u8 = 0x1;
@@ -37,7 +38,26 @@ impl SettingsFrame {
             &[][..]
         }
     }
+    pub fn frame_header(&self) -> FrameHeader {
+        let mut flags = 0;
+        if self.is_ack() {
+            flags |= FLAG_ACK;
+        }
 
+        FrameHeader {
+            payload_length: self.payload_len() as u32,
+            frame_type: super::FRAME_TYPE_SETTINGS,
+            flags,
+            stream_id: StreamId::connection_control_stream_id(),
+        }
+    }
+    pub fn write_into<W: Write>(self, writer: W) -> WriteSettingsFrame<W> {
+        let mut buf = Vec::with_capacity(self.settings().len() * 6);
+        for s in self.settings() {
+            buf.extend_from_slice(&s.to_bytes()[..]);
+        }
+        WriteSettingsFrame(writer.async_write_all(buf))
+    }
     pub fn read_from<R: Read>(reader: R, header: FrameHeader) -> Result<ReadSettingsFrame<R>> {
         track_assert_eq!(header.payload_length % 6, 0, ErrorKind::FrameSizeError);
         track_assert!(
@@ -49,6 +69,16 @@ impl SettingsFrame {
             header,
             future: reader.async_read_exact(bytes),
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct WriteSettingsFrame<W>(WriteAll<W, Vec<u8>>);
+impl<W: Write> Future for WriteSettingsFrame<W> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        Ok(track_async_io!(self.0.poll())?.map(|(writer, _)| writer))
     }
 }
 

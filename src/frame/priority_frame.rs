@@ -1,8 +1,8 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use futures::{Future, Poll};
 
 use {Result, Error, ErrorKind};
-use priority::{Priority, ReadPriority};
+use priority::{Priority, ReadPriority, WritePriority};
 use stream::StreamId;
 use super::FrameHeader;
 
@@ -23,6 +23,17 @@ pub struct PriorityFrame {
     pub priority: Priority,
 }
 impl PriorityFrame {
+    pub fn payload_len(&self) -> usize {
+        5
+    }
+    pub fn frame_header(&self) -> FrameHeader {
+        FrameHeader {
+            payload_length: self.payload_len() as u32,
+            frame_type: super::FRAME_TYPE_PRIORITY,
+            flags: 0,
+            stream_id: self.stream_id,
+        }
+    }
     pub fn read_from<R: Read>(reader: R, header: FrameHeader) -> Result<ReadPriorityFrame<R>> {
         track_assert_eq!(header.payload_length, 5, ErrorKind::FrameSizeError);
         track_assert!(
@@ -33,6 +44,19 @@ impl PriorityFrame {
             header,
             future: Priority::read_from(reader),
         })
+    }
+    pub fn write_into<W: Write>(self, writer: W) -> WritePriorityFrame<W> {
+        WritePriorityFrame(self.priority.write_into(writer))
+    }
+}
+
+#[derive(Debug)]
+pub struct WritePriorityFrame<W>(WritePriority<W>);
+impl<W: Write> Future for WritePriorityFrame<W> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        track!(self.0.poll())
     }
 }
 

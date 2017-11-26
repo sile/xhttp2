@@ -1,8 +1,10 @@
-use std::io::Read;
+use std::fmt;
+use std::io::{Read, Write};
 use futures::{Future, Poll, Async};
 use handy_async::future::Phase;
-use handy_async::io::AsyncRead;
-use handy_async::io::futures::ReadExact;
+use handy_async::io::{AsyncRead, WriteInto};
+use handy_async::io::futures::{ReadExact, WritePattern};
+use handy_async::pattern::Buf;
 
 use {Result, Error, ErrorKind};
 use priority::{Priority, ReadPriority};
@@ -46,9 +48,41 @@ impl<B: AsRef<[u8]>> HeadersFrame<B> {
         self.fragment.as_ref().len() + self.padding_len.map_or(0, |x| x as usize + 1) +
             self.priority.as_ref().map_or(0, |_| 5)
     }
+    pub fn frame_header(&self) -> FrameHeader {
+        let mut flags = 0;
+        if self.end_stream {
+            flags |= FLAG_END_STREAM;
+        }
+        if self.end_headers {
+            flags |= FLAG_END_HEADERS;
+        }
+        if self.padding_len.is_some() {
+            flags |= FLAG_PADDED;
+        }
+        if self.priority.is_some() {
+            flags |= FLAG_PRIORITY;
+        }
+
+        FrameHeader {
+            payload_length: self.payload_len() as u32,
+            frame_type: super::FRAME_TYPE_HEADERS,
+            flags,
+            stream_id: self.stream_id,
+        }
+    }
+    pub fn write_into<W: Write>(self, writer: W) -> WriteHeadersFrame<W, B> {
+        let padding: &'static [u8] = &[0; 255][0..self.padding_len.map_or(0, |x| x as usize)];
+        let pattern = (
+            self.padding_len,
+            self.priority.map(|x| Buf(x.to_bytes())),
+            Buf(self.fragment),
+            Buf(padding),
+        );
+        WriteHeadersFrame { future: pattern.write_into(writer) }
+    }
 }
-impl<R: Read> HeadersFrame<R> {
-    pub fn read_from(reader: R, header: FrameHeader) -> Result<ReadHeadersFrame<R>> {
+impl HeadersFrame<Vec<u8>> {
+    pub fn read_from<R: Read>(reader: R, header: FrameHeader) -> Result<ReadHeadersFrame<R>> {
         track_assert!(
             !header.stream_id.is_connection_control_stream(),
             ErrorKind::ProtocolError
@@ -68,6 +102,24 @@ impl<R: Read> HeadersFrame<R> {
             priority: None,
             phase,
         })
+    }
+}
+
+pub struct WriteHeadersFrame<W: Write, B: AsRef<[u8]>> {
+    future: WritePattern<(Option<u8>, Option<Buf<[u8; 5]>>, Buf<B>, Buf<&'static [u8]>), W>,
+}
+impl<W: Write, B: AsRef<[u8]>> Future for WriteHeadersFrame<W, B> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        Ok(track_async_io!(self.future.poll())?.map(
+            |(writer, _)| writer,
+        ))
+    }
+}
+impl<W: Write, B: AsRef<[u8]>> fmt::Debug for WriteHeadersFrame<W, B> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "WriteHeadersFrame(_)")
     }
 }
 

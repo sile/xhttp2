@@ -1,8 +1,8 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use byteorder::{ByteOrder, BigEndian};
 use futures::{Future, Poll};
-use handy_async::io::AsyncRead;
-use handy_async::io::futures::ReadExact;
+use handy_async::io::{AsyncRead, AsyncWrite};
+use handy_async::io::futures::{ReadExact, WriteAll};
 
 use {Result, ErrorKind, Error};
 use stream::StreamId;
@@ -58,6 +58,10 @@ impl Priority {
     pub fn read_from<R: Read>(reader: R) -> ReadPriority<R> {
         ReadPriority(reader.async_read_exact([0; 5]))
     }
+
+    pub fn write_into<W: Write>(self, writer: W) -> WritePriority<W> {
+        WritePriority(writer.async_write_all(self.to_bytes()))
+    }
 }
 impl Default for Priority {
     fn default() -> Self {
@@ -66,6 +70,16 @@ impl Default for Priority {
             stream_dependency: StreamId::connection_control_stream_id(),
             weight: Weight::from_weight_minus_one(15),
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct WritePriority<W>(WriteAll<W, [u8; 5]>);
+impl<W: Write> Future for WritePriority<W> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        Ok(track_async_io!(self.0.poll())?.map(|(writer, _)| writer))
     }
 }
 

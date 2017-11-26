@@ -60,7 +60,7 @@ mod test {
         assert_eq!(input.len(), data.len() - preface::PREFACE_BYTES.len());
 
         // the first frame
-        let (input, frame) = track_try_unwrap!(Frame::read_from(&input[..]).wait());
+        let (input, frame) = track_try_unwrap!(Frame::read_from(&input[..], 0xFFFF).wait());
         if let Frame::Settings(frame) = frame {
             assert!(!frame.is_ack());
             assert!(frame.settings().is_empty());
@@ -69,7 +69,7 @@ mod test {
         };
 
         // the second frame
-        let (input, frame) = track_try_unwrap!(Frame::read_from(&input[..]).wait());
+        let (input, frame) = track_try_unwrap!(Frame::read_from(&input[..], 0xFFFF).wait());
         if let Frame::Headers(frame) = frame {
             assert_eq!(frame.stream_id, 1u8.into());
             assert!(frame.padding_len.is_none());
@@ -82,7 +82,7 @@ mod test {
         };
 
         // the third frame
-        let (input, frame) = track_try_unwrap!(Frame::read_from(&input[..]).wait());
+        let (input, frame) = track_try_unwrap!(Frame::read_from(&input[..], 0xFFFF).wait());
         if let Frame::Data(frame) = frame {
             assert_eq!(frame.stream_id, 1u8.into());
             assert!(frame.end_stream);

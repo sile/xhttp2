@@ -1,8 +1,10 @@
-use std::io::Read;
+use std::fmt;
+use std::io::{Read, Write};
 use futures::{Future, Poll, Async};
 use handy_async::future::Phase;
-use handy_async::io::AsyncRead;
-use handy_async::io::futures::ReadExact;
+use handy_async::io::{AsyncRead, WriteInto};
+use handy_async::io::futures::{ReadExact, WritePattern};
+use handy_async::pattern::Buf;
 
 use {Result, Error, ErrorKind};
 use stream::StreamId;
@@ -36,9 +38,31 @@ impl<B: AsRef<[u8]>> DataFrame<B> {
     pub fn payload_len(&self) -> usize {
         self.data.as_ref().len() + self.padding_len.map_or(0, |x| x as usize + 1)
     }
+    pub fn frame_header(&self) -> FrameHeader {
+        let mut flags = 0;
+        if self.end_stream {
+            flags |= FLAG_END_STREAM;
+        }
+        if self.padding_len.is_some() {
+            flags |= FLAG_PADDED;
+        }
+
+        FrameHeader {
+            payload_length: self.payload_len() as u32,
+            frame_type: super::FRAME_TYPE_DATA,
+            flags,
+            stream_id: self.stream_id,
+        }
+    }
+    pub fn write_into<W: Write>(self, writer: W) -> WriteDataFrame<W, B> {
+        let padding: &'static [u8] = &[0; 255][0..self.padding_len.map_or(0, |x| x as usize)];
+        WriteDataFrame(
+            (self.padding_len, Buf(self.data), Buf(padding)).write_into(writer),
+        )
+    }
 }
-impl<R: Read> DataFrame<R> {
-    pub fn read_from(reader: R, header: FrameHeader) -> Result<ReadDataFrame<R>> {
+impl DataFrame<Vec<u8>> {
+    pub fn read_from<R: Read>(reader: R, header: FrameHeader) -> Result<ReadDataFrame<R>> {
         track_assert!(
             !header.stream_id.is_connection_control_stream(),
             ErrorKind::ProtocolError
@@ -54,6 +78,20 @@ impl<R: Read> DataFrame<R> {
             padding_len: None,
             phase,
         })
+    }
+}
+
+pub struct WriteDataFrame<W: Write, B: AsRef<[u8]>>(WritePattern<(Option<u8>, Buf<B>, Buf<&'static [u8]>), W>);
+impl<W: Write, B: AsRef<[u8]>> Future for WriteDataFrame<W, B> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        Ok(track_async_io!(self.0.poll())?.map(|(writer, _)| writer))
+    }
+}
+impl<W: Write, B: AsRef<[u8]>> fmt::Debug for WriteDataFrame<W, B> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "WriteDataFrame(_)")
     }
 }
 

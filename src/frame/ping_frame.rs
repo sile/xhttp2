@@ -1,9 +1,10 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use futures::{Future, Poll};
-use handy_async::io::AsyncRead;
-use handy_async::io::futures::ReadExact;
+use handy_async::io::{AsyncRead, AsyncWrite};
+use handy_async::io::futures::{ReadExact, WriteAll};
 
 use {Result, Error, ErrorKind};
+use stream::StreamId;
 use super::FrameHeader;
 
 const FLAG_ACK: u8 = 0x01;
@@ -25,6 +26,20 @@ pub struct PingFrame {
     pub data: [u8; 8],
 }
 impl PingFrame {
+    pub fn payload_len(&self) -> usize {
+        8
+    }
+    pub fn frame_header(&self) -> FrameHeader {
+        FrameHeader {
+            payload_length: self.payload_len() as u32,
+            frame_type: super::FRAME_TYPE_PING,
+            flags: 0,
+            stream_id: StreamId::connection_control_stream_id(),
+        }
+    }
+    pub fn write_into<W: Write>(self, writer: W) -> WritePingFrame<W> {
+        WritePingFrame(writer.async_write_all(self.data))
+    }
     pub fn read_from<R: Read>(reader: R, header: FrameHeader) -> Result<ReadPingFrame<R>> {
         track_assert_eq!(header.payload_length, 8, ErrorKind::FrameSizeError);
         track_assert!(
@@ -35,6 +50,16 @@ impl PingFrame {
             header,
             future: reader.async_read_exact([0; 8]),
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct WritePingFrame<W>(WriteAll<W, [u8; 8]>);
+impl<W: Write> Future for WritePingFrame<W> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        Ok(track_async_io!(self.0.poll())?.map(|(writer, _)| writer))
     }
 }
 

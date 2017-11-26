@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use futures::{Future, Poll, Async};
 use handy_async::future::Phase;
 
@@ -11,20 +11,22 @@ pub use self::priority_frame::PriorityFrame;
 pub use self::push_promise_frame::PushPromiseFrame;
 pub use self::rst_stream_frame::RstStreamFrame;
 pub use self::settings_frame::SettingsFrame;
+pub use self::sink::FrameSink;
+pub use self::stream::FrameStream;
 pub use self::window_update_frame::WindowUpdateFrame;
 
-use Error;
-use self::continuation_frame::ReadContinuationFrame;
-use self::data_frame::ReadDataFrame;
-use self::frame_header::{FrameHeader, ReadFrameHeader};
-use self::goaway_frame::ReadGoawayFrame;
-use self::headers_frame::ReadHeadersFrame;
-use self::ping_frame::ReadPingFrame;
-use self::priority_frame::ReadPriorityFrame;
-use self::push_promise_frame::ReadPushPromiseFrame;
-use self::rst_stream_frame::ReadRstStreamFrame;
-use self::settings_frame::ReadSettingsFrame;
-use self::window_update_frame::ReadWindowUpdateFrame;
+use {Error, ErrorKind};
+use self::continuation_frame::{ReadContinuationFrame, WriteContinuationFrame};
+use self::data_frame::{ReadDataFrame, WriteDataFrame};
+use self::frame_header::{FrameHeader, ReadFrameHeader, WriteFrameHeader};
+use self::goaway_frame::{ReadGoawayFrame, WriteGoawayFrame};
+use self::headers_frame::{ReadHeadersFrame, WriteHeadersFrame};
+use self::ping_frame::{ReadPingFrame, WritePingFrame};
+use self::priority_frame::{ReadPriorityFrame, WritePriorityFrame};
+use self::push_promise_frame::{ReadPushPromiseFrame, WritePushPromiseFrame};
+use self::rst_stream_frame::{ReadRstStreamFrame, WriteRstStreamFrame};
+use self::settings_frame::{ReadSettingsFrame, WriteSettingsFrame};
+use self::window_update_frame::{ReadWindowUpdateFrame, WriteWindowUpdateFrame};
 
 mod continuation_frame;
 mod data_frame;
@@ -36,6 +38,8 @@ mod priority_frame;
 mod push_promise_frame;
 mod rst_stream_frame;
 mod settings_frame;
+mod sink;
+mod stream;
 mod window_update_frame;
 
 const FRAME_TYPE_DATA: u8 = 0x0;
@@ -69,23 +73,179 @@ impl<B: AsRef<[u8]>> Frame<B> {
             Frame::Data(ref frame) => frame.payload_len(),
             Frame::Goaway(ref frame) => frame.payload_len(),
             Frame::Headers(ref frame) => frame.payload_len(),
-            Frame::Ping(_) => 8,
-            Frame::Priority(_) => 5,
-            Frame::RstStream(_) => 4,
+            Frame::Ping(ref frame) => frame.payload_len(),
+            Frame::Priority(ref frame) => frame.payload_len(),
+            Frame::RstStream(ref frame) => frame.payload_len(),
             Frame::PushPromise(ref frame) => frame.payload_len(),
             Frame::Settings(ref frame) => frame.payload_len(),
-            Frame::WindowUpdate(_) => 4,
+            Frame::WindowUpdate(ref frame) => frame.payload_len(),
+        }
+    }
+    pub fn frame_header(&self) -> FrameHeader {
+        match *self {
+            Frame::Continuation(ref frame) => frame.frame_header(),
+            Frame::Data(ref frame) => frame.frame_header(),
+            Frame::Goaway(ref frame) => frame.frame_header(),
+            Frame::Headers(ref frame) => frame.frame_header(),
+            Frame::Ping(ref frame) => frame.frame_header(),
+            Frame::Priority(ref frame) => frame.frame_header(),
+            Frame::RstStream(ref frame) => frame.frame_header(),
+            Frame::PushPromise(ref frame) => frame.frame_header(),
+            Frame::Settings(ref frame) => frame.frame_header(),
+            Frame::WindowUpdate(ref frame) => frame.frame_header(),
+        }
+    }
+    pub fn write_into<W: Write>(self, writer: W) -> WriteFrame<W, B> {
+        let phase = Phase::A(self.frame_header().write_into(writer));
+        let frame = Some(self);
+        WriteFrame { frame, phase }
+    }
+}
+impl Frame<Vec<u8>> {
+    pub fn read_from<R: Read>(reader: R, max_frame_size: u32) -> ReadFrame<R> {
+        let phase = Phase::A(FrameHeader::read_from(reader));
+        ReadFrame {
+            max_frame_size,
+            phase,
         }
     }
 }
-impl<R: Read> Frame<R> {
-    pub fn read_from(reader: R) -> ReadFrame<R> {
-        ReadFrame { phase: Phase::A(FrameHeader::read_from(reader)) }
+impl<B> From<ContinuationFrame<B>> for Frame<B> {
+    fn from(f: ContinuationFrame<B>) -> Self {
+        Frame::Continuation(f)
+    }
+}
+impl<B> From<DataFrame<B>> for Frame<B> {
+    fn from(f: DataFrame<B>) -> Self {
+        Frame::Data(f)
+    }
+}
+impl<B> From<GoawayFrame> for Frame<B> {
+    fn from(f: GoawayFrame) -> Self {
+        Frame::Goaway(f)
+    }
+}
+impl<B> From<HeadersFrame<B>> for Frame<B> {
+    fn from(f: HeadersFrame<B>) -> Self {
+        Frame::Headers(f)
+    }
+}
+impl<B> From<PingFrame> for Frame<B> {
+    fn from(f: PingFrame) -> Self {
+        Frame::Ping(f)
+    }
+}
+impl<B> From<PriorityFrame> for Frame<B> {
+    fn from(f: PriorityFrame) -> Self {
+        Frame::Priority(f)
+    }
+}
+impl<B> From<RstStreamFrame> for Frame<B> {
+    fn from(f: RstStreamFrame) -> Self {
+        Frame::RstStream(f)
+    }
+}
+impl<B> From<PushPromiseFrame<B>> for Frame<B> {
+    fn from(f: PushPromiseFrame<B>) -> Self {
+        Frame::PushPromise(f)
+    }
+}
+impl<B> From<SettingsFrame> for Frame<B> {
+    fn from(f: SettingsFrame) -> Self {
+        Frame::Settings(f)
+    }
+}
+impl<B> From<WindowUpdateFrame> for Frame<B> {
+    fn from(f: WindowUpdateFrame) -> Self {
+        Frame::WindowUpdate(f)
+    }
+}
+
+#[derive(Debug)]
+pub struct WriteFrame<W: Write, B: AsRef<[u8]>> {
+    frame: Option<Frame<B>>,
+    phase: Phase<WriteFrameHeader<W>, WriteFramePayload<W, B>>,
+}
+impl<W: Write, B: AsRef<[u8]>> Future for WriteFrame<W, B> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        while let Async::Ready(phase) = track_async_io!(self.phase.poll())? {
+            let next = match phase {
+                Phase::A(writer) => {
+                    let frame = self.frame.take().expect("Never fails");
+                    let future = match frame {
+                        Frame::Continuation(frame) => {
+                            WriteFramePayload::Continuation(frame.write_into(writer))
+                        }
+                        Frame::Data(frame) => WriteFramePayload::Data(frame.write_into(writer)),
+                        Frame::Goaway(frame) => WriteFramePayload::Goaway(frame.write_into(writer)),
+                        Frame::Headers(frame) => WriteFramePayload::Headers(
+                            frame.write_into(writer),
+                        ),
+                        Frame::Ping(frame) => WriteFramePayload::Ping(frame.write_into(writer)),
+                        Frame::Priority(frame) => WriteFramePayload::Priority(
+                            frame.write_into(writer),
+                        ),
+                        Frame::PushPromise(frame) => WriteFramePayload::PushPromise(
+                            frame.write_into(writer),
+                        ),
+                        Frame::RstStream(frame) => WriteFramePayload::RstStream(
+                            frame.write_into(writer),
+                        ),
+                        Frame::Settings(frame) => WriteFramePayload::Settings(
+                            frame.write_into(writer),
+                        ),
+                        Frame::WindowUpdate(frame) => WriteFramePayload::WindowUpdate(
+                            frame.write_into(writer),
+                        ),
+                    };
+                    Phase::B(future)
+                }
+                Phase::B(writer) => return Ok(Async::Ready(writer)),
+                _ => unreachable!(),
+            };
+            self.phase = next;
+        }
+        Ok(Async::NotReady)
+    }
+}
+
+#[derive(Debug)]
+enum WriteFramePayload<W: Write, B: AsRef<[u8]>> {
+    Continuation(WriteContinuationFrame<W, B>),
+    Data(WriteDataFrame<W, B>),
+    Goaway(WriteGoawayFrame<W>),
+    Headers(WriteHeadersFrame<W, B>),
+    Ping(WritePingFrame<W>),
+    Priority(WritePriorityFrame<W>),
+    PushPromise(WritePushPromiseFrame<W, B>),
+    RstStream(WriteRstStreamFrame<W>),
+    Settings(WriteSettingsFrame<W>),
+    WindowUpdate(WriteWindowUpdateFrame<W>),
+}
+impl<W: Write, B: AsRef<[u8]>> Future for WriteFramePayload<W, B> {
+    type Item = W;
+    type Error = Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match *self {
+            WriteFramePayload::Continuation(ref mut f) => track!(f.poll()),
+            WriteFramePayload::Data(ref mut f) => track!(f.poll()),
+            WriteFramePayload::Goaway(ref mut f) => track!(f.poll()),
+            WriteFramePayload::Headers(ref mut f) => track!(f.poll()),
+            WriteFramePayload::Ping(ref mut f) => track!(f.poll()),
+            WriteFramePayload::Priority(ref mut f) => track!(f.poll()),
+            WriteFramePayload::PushPromise(ref mut f) => track!(f.poll()),
+            WriteFramePayload::RstStream(ref mut f) => track!(f.poll()),
+            WriteFramePayload::Settings(ref mut f) => track!(f.poll()),
+            WriteFramePayload::WindowUpdate(ref mut f) => track!(f.poll()),
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct ReadFrame<R> {
+    max_frame_size: u32,
     phase: Phase<ReadFrameHeader<R>, ReadFramePayload<R>>,
 }
 impl<R: Read> ReadFrame<R> {
@@ -111,6 +271,11 @@ impl<R: Read> Future for ReadFrame<R> {
         while let Async::Ready(phase) = track!(self.phase.poll().map_err(Error::from))? {
             let next = match phase {
                 Phase::A((reader, header)) => {
+                    track_assert!(
+                        header.payload_length <= self.max_frame_size,
+                        ErrorKind::FrameSizeError
+                    );
+
                     match header.frame_type {
                         FRAME_TYPE_DATA => {
                             let future = track!(DataFrame::read_from(reader, header))?;
