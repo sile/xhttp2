@@ -14,6 +14,14 @@ use stream::{StreamId, Stream, StreamHandle, StreamItem};
 
 // TODO: move
 pub struct Bytes(Box<AsRef<[u8]> + Send + 'static>);
+impl Bytes {
+    pub fn new<B>(bytes: B) -> Self
+    where
+        B: AsRef<[u8]> + Send + 'static,
+    {
+        Bytes(Box::new(bytes))
+    }
+}
 impl AsRef<[u8]> for Bytes {
     fn as_ref(&self) -> &[u8] {
         (*self.0).as_ref()
@@ -88,7 +96,22 @@ impl<R: Read, W: Write> Connection<R, W> {
         unimplemented!("{:?}", frame);
     }
     fn handle_data_frame(&mut self, frame: frame::DataFrame<Vec<u8>>) -> Result<()> {
-        unimplemented!("{:?}", frame);
+        // TODO: flow control
+        if let Some(ref mut stream) = self.streams.get_mut(&frame.stream_id) {
+            stream.handle_data(frame.data);
+            if frame.end_stream {
+                stream.handle_end_stream();
+            }
+        } else {
+            // > If a DATA frame is received
+            // > whose stream is not in "open" or "half-closed (local)" state, the
+            // > recipient MUST respond with a stream error (Section 5.4.2) of type
+            // > STREAM_CLOSED.
+            // >
+            // > [RFC 7540]
+            unimplemented!("{:?}", frame);
+        }
+        Ok(())
     }
     fn handle_goaway_frame(&mut self, frame: frame::GoawayFrame) -> Result<()> {
         unimplemented!("{:?}", frame);

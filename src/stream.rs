@@ -6,6 +6,7 @@ use handy_async::io::AsyncRead;
 use handy_async::io::futures::ReadExact;
 
 use {Result, ErrorKind, Error};
+use connection::Bytes;
 use header::Header;
 
 /// Stream Identifier:  A stream identifier (see Section 5.1.1) expressed
@@ -115,9 +116,18 @@ impl StreamHandle {
         let _ = self.tx.send(StreamItem::Header(header));
         Ok(())
     }
+    pub fn handle_data(&mut self, data: Vec<u8>) {
+        // TODO: check state
+        let _ = self.tx.send(StreamItem::Data(Bytes::new(data)));
+    }
+    pub fn handle_end_stream(&mut self) {
+        // TODO: check state
+        self.state = StreamState::HalfClosedRemote;
+    }
 }
 
 #[derive(Debug)]
 pub enum StreamItem {
     Header(Header),
+    Data(Bytes),
 }
