@@ -1,6 +1,7 @@
 use std;
 use handy_async::future::Phase;
 use handy_async::io::AsyncIoError;
+use hpack_codec;
 use trackable::error::TrackableError;
 use trackable::error::{ErrorKind as TrackableErrorKind, ErrorKindExt};
 
@@ -102,6 +103,11 @@ impl From<std::io::Error> for Error {
 impl<T> From<AsyncIoError<T>> for Error {
     fn from(f: AsyncIoError<T>) -> Self {
         ErrorKind::InternalError.cause(f.into_error()).into()
+    }
+}
+impl From<hpack_codec::Error> for Error {
+    fn from(f: hpack_codec::Error) -> Self {
+        ErrorKind::CompressionError.takes_over(f).into()
     }
 }
 impl<A, B, C, D, E> From<Phase<A, B, C, D, E>> for Error

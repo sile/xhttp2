@@ -1,53 +1,15 @@
 extern crate clap;
 extern crate futures;
 extern crate fibers;
-#[macro_use]
 extern crate trackable;
 extern crate xhttp2;
 
 use std::net::SocketAddr;
 use clap::{App, Arg};
 use fibers::{Spawn, Executor, ThreadPoolExecutor};
-use fibers::sync::mpsc;
-use futures::{Future, Stream, Sink, Poll, StartSend, AsyncSink, Async};
-use trackable::error::ErrorKindExt;
-use xhttp2::{Error, ErrorKind};
-use xhttp2::connection::{Connection, ChannelFactory, Bytes};
-use xhttp2::frame::Frame;
-
-struct FibersChannelFactory;
-impl ChannelFactory for FibersChannelFactory {
-    type Sender = FrameSender;
-    type Receiver = FrameReceiver;
-    fn channel(&mut self) -> (Self::Sender, Self::Receiver) {
-        let (tx, rx) = mpsc::channel();
-        (FrameSender(tx), FrameReceiver(rx))
-    }
-}
-
-#[derive(Clone)]
-struct FrameSender(mpsc::Sender<Frame<Bytes>>);
-impl Sink for FrameSender {
-    type SinkItem = Frame<Bytes>;
-    type SinkError = Error;
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
-        track!(self.0.send(item).map(|_| AsyncSink::Ready).map_err(|_| {
-            ErrorKind::InternalError.cause("receiver terminated").into()
-        }))
-    }
-    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-        Ok(Async::Ready(()))
-    }
-}
-
-struct FrameReceiver(mpsc::Receiver<Frame<Bytes>>);
-impl Stream for FrameReceiver {
-    type Item = Frame<Bytes>;
-    type Error = Error;
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.0.poll().map_err(|_| unreachable!())
-    }
-}
+use futures::{Future, Stream};
+use xhttp2::Error;
+use xhttp2::connection::Connection;
 
 fn main() {
     let matches = App::new("server")
@@ -55,7 +17,7 @@ fn main() {
             Arg::with_name("PORT")
                 .short("p")
                 .takes_value(true)
-                .default_value("3000"),
+                .default_value("50051"),
         )
         .get_matches();
     let port = matches.value_of("PORT").unwrap();
@@ -73,9 +35,7 @@ fn main() {
                 handle0.spawn(
                     client
                         .map_err(Error::from)
-                        .and_then(move |client| {
-                            Connection::accept(client.clone(), client, FibersChannelFactory)
-                        })
+                        .and_then(move |client| Connection::accept(client.clone(), client))
                         .and_then(|mut connection| {
                             println!("# HTTP2 CONNECTED");
                             connection.ping([1; 8]);

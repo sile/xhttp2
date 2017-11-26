@@ -1,10 +1,12 @@
 use std::io::Read;
 use byteorder::{ByteOrder, BigEndian};
+use fibers::sync::mpsc;
 use futures::{Future, Poll};
 use handy_async::io::AsyncRead;
 use handy_async::io::futures::ReadExact;
 
 use {Result, ErrorKind, Error};
+use header::Header;
 
 /// Stream Identifier:  A stream identifier (see Section 5.1.1) expressed
 /// as an unsigned 31-bit integer.  The value 0x0 is reserved for
@@ -22,6 +24,12 @@ impl StreamId {
     }
     pub fn is_connection_control_stream(&self) -> bool {
         self.0 == 0
+    }
+    pub fn is_client_initiated_stream(&self) -> bool {
+        self.0 % 2 == 1
+    }
+    pub fn is_server_initiated_stream(&self) -> bool {
+        self.0 % 2 == 0
     }
     pub(crate) fn new_unchecked(id: u32) -> Self {
         StreamId(id)
@@ -64,4 +72,52 @@ impl<R: Read> Future for ReadStreamId<R> {
             (reader, stream_id)
         }))
     }
+}
+
+#[derive(Debug)]
+pub struct Stream {
+    id: StreamId,
+    tx: mpsc::Sender<(StreamId, StreamItem)>,
+    rx: mpsc::Receiver<StreamItem>,
+}
+impl Stream {
+    pub fn new(id: StreamId, tx: mpsc::Sender<(StreamId, StreamItem)>) -> (Self, StreamHandle) {
+        let (handle_tx, rx) = mpsc::channel();
+        let handle = StreamHandle::new(handle_tx);
+        (Stream { id, tx, rx }, handle)
+    }
+}
+
+#[derive(Debug)]
+pub enum StreamState {
+    Idle,
+    ReservedRemote,
+    Open,
+    HalfClosedLocal,
+    HalfClosedRemote,
+    Closed,
+}
+
+#[derive(Debug)]
+pub struct StreamHandle {
+    tx: mpsc::Sender<StreamItem>,
+    state: StreamState,
+}
+impl StreamHandle {
+    fn new(tx: mpsc::Sender<StreamItem>) -> Self {
+        StreamHandle {
+            tx,
+            state: StreamState::Idle,
+        }
+    }
+    pub fn handle_header(&mut self, header: Header) -> Result<()> {
+        // TODO: check state
+        let _ = self.tx.send(StreamItem::Header(header));
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub enum StreamItem {
+    Header(Header),
 }

@@ -1,6 +1,8 @@
 extern crate byteorder;
+extern crate fibers;
 extern crate futures;
 extern crate handy_async;
+extern crate hpack_codec;
 #[macro_use]
 extern crate trackable;
 
@@ -21,6 +23,7 @@ macro_rules! track_async_io {
 
 pub mod connection;
 pub mod frame;
+pub mod header;
 pub mod preface;
 pub mod priority;
 pub mod setting;

@@ -1,12 +1,16 @@
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 use std::fmt;
 use std::io::{Read, Write};
+use fibers::sync::mpsc;
 use futures::{self, Future, Poll, Async, Sink};
+use hpack_codec::Decoder as HpackDecoder;
 
 use {Result, Error, ErrorKind};
 use frame::{self, Frame, SettingsFrame, FrameSink, FrameStream};
+use header::Header;
 use preface::{self, ReadPreface};
 use setting::{Setting, Settings};
+use stream::{StreamId, Stream, StreamHandle, StreamItem};
 
 // TODO: move
 pub struct Bytes(Box<AsRef<[u8]> + Send + 'static>);
@@ -22,35 +26,32 @@ impl fmt::Debug for Bytes {
 }
 
 // TODO: move
-pub trait ChannelFactory {
-    type Sender: Sink<SinkItem = Frame<Bytes>, SinkError = Error> + Clone;
-    type Receiver: futures::Stream<Item = Frame<Bytes>, Error = Error>;
-    fn channel(&mut self) -> (Self::Sender, Self::Receiver);
-}
-
-// TODO: move
 #[derive(Debug)]
 pub enum Event {
-    Stream,
+    Stream(Stream),
     Pong { data: [u8; 8] },
 }
 
 #[derive(Debug)]
-pub struct Connection<R, W: Write, C> {
+pub struct Connection<R, W: Write> {
     is_settings_received: bool,
     events: VecDeque<Event>,
     stream: FrameStream<R>,
-    channel_factory: C,
     sink: FrameSink<W, Bytes>,
     settings: Settings,
+    next_self_stream_id: StreamId,
+    next_peer_stream_id: StreamId,
+    streams: HashMap<StreamId, StreamHandle>,
+    stream_item_tx: mpsc::Sender<(StreamId, StreamItem)>,
+    stream_item_rx: mpsc::Receiver<(StreamId, StreamItem)>,
+    hpack_decoder: HpackDecoder,
 }
-impl<R: Read, W: Write, C> Connection<R, W, C> {
-    pub fn accept(reader: R, writer: W, channel_factory: C) -> Accept<R, W, C> {
+impl<R: Read, W: Write> Connection<R, W> {
+    pub fn accept(reader: R, writer: W) -> Accept<R, W> {
         let future = preface::read_preface(reader);
         Accept {
             future,
             writer: Some(writer),
-            channel_factory: Some(channel_factory),
         }
     }
 
@@ -60,18 +61,24 @@ impl<R: Read, W: Write, C> Connection<R, W, C> {
         );
     }
 
-    fn new(reader: R, writer: W, channel_factory: C) -> Self {
+    fn new(reader: R, writer: W) -> Self {
         let settings = Settings::default();
         let mut sink = FrameSink::new(writer);
         sink.start_write_frame(SettingsFrame::Syn(vec![])); // TODO:
 
+        let (stream_item_tx, stream_item_rx) = mpsc::channel();
         Connection {
             is_settings_received: false,
             events: VecDeque::new(),
             stream: FrameStream::new(reader),
             sink,
             settings,
-            channel_factory,
+            next_self_stream_id: StreamId::from(2u8), // TODO: use `is_server`
+            next_peer_stream_id: StreamId::from(1u8),
+            streams: HashMap::new(),
+            stream_item_tx,
+            stream_item_rx,
+            hpack_decoder: HpackDecoder::new(4096),
         }
     }
     fn handle_continuation_frame(
@@ -96,12 +103,30 @@ impl<R: Read, W: Write, C> Connection<R, W, C> {
         if !frame.end_headers {
             unimplemented!("{:?}", frame);
         }
-        // self.events.push_back(
+        if self.streams.contains_key(&frame.stream_id) {
+            unimplemented!("{:?}", frame);
+        }
 
-        //     Event::Headers { block: frame.fragment },
-        // );
-        //Ok(())
-        unimplemented!("{:?}", frame);
+        // > The identifier of a newly established stream MUST be numerically
+        // > greater than all streams that the initiating endpoint has opened or
+        // > reserved.  This governs streams that are opened using a HEADERS frame
+        // > and streams that are reserved using PUSH_PROMISE.  An endpoint that
+        // > receives an unexpected stream identifier MUST respond with a
+        // > connection error (Section 5.4.1) of type PROTOCOL_ERROR.
+        // >
+        // > [RFC 7540]
+        track_assert!(
+            frame.stream_id >= self.next_peer_stream_id,
+            ErrorKind::ProtocolError
+        );
+        let header = track!(Header::decode(&mut self.hpack_decoder, &frame.fragment))?;
+
+        let (stream, mut handle) = Stream::new(frame.stream_id, self.stream_item_tx.clone());
+        track!(handle.handle_header(header))?;
+
+        self.streams.insert(frame.stream_id, handle);
+        self.events.push_back(Event::Stream(stream));
+        Ok(())
     }
     fn handle_ping_frame(&mut self, frame: frame::PingFrame) -> Result<()> {
         if frame.ack {
@@ -190,7 +215,7 @@ impl<R: Read, W: Write, C> Connection<R, W, C> {
         Ok(())
     }
 }
-impl<R: Read, W: Write, C> futures::Stream for Connection<R, W, C> {
+impl<R: Read, W: Write> futures::Stream for Connection<R, W> {
     type Item = Event;
     type Error = Error;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -215,21 +240,16 @@ impl<R: Read, W: Write, C> futures::Stream for Connection<R, W, C> {
 }
 
 #[derive(Debug)]
-pub struct Accept<R, W, C> {
+pub struct Accept<R, W> {
     future: ReadPreface<R>,
     writer: Option<W>,
-    channel_factory: Option<C>,
 }
-impl<R: Read, W: Write, C> Future for Accept<R, W, C> {
-    type Item = Connection<R, W, C>;
+impl<R: Read, W: Write> Future for Accept<R, W> {
+    type Item = Connection<R, W>;
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         if let Async::Ready(reader) = track!(self.future.poll())? {
-            let connection = Connection::new(
-                reader,
-                self.writer.take().expect("Never fails"),
-                self.channel_factory.take().expect("Never fails"),
-            );
+            let connection = Connection::new(reader, self.writer.take().expect("Never fails"));
             Ok(Async::Ready(connection))
         } else {
             Ok(Async::NotReady)

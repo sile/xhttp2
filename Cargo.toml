@@ -5,11 +5,11 @@ authors = ["Takeru Ohta <phjgt308@gmail.com>"]
 
 [dependencies]
 byteorder = "1"
+fibers = "0.1"
 futures = "0.1"
 handy_async = "0.2"
+hpack_codec = "0.1"
 trackable = "0.2"
 
 [dev-dependencies]
 clap = "2"
-fibers = "0.1"
-hpack_codec = "0.1"
